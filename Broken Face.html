@@ -1,0 +1,3233 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Broken Face</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Cinzel (電影標題感) & Inter & Noto Serif TC -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@300;400;500;600&family=Noto+Serif+TC:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <!-- Three.js 與後處理模組 (Import Map) -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+        "@pixiv/three-vrm": "./three-vrm.module.js"
+      }
+    }
+  </script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background-color: #07090e;
+      font-family: 'Inter', 'Noto Serif TC', sans-serif;
+    }
+
+    #canvas-container {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      z-index: 1;
+    }
+
+    #canvas-container canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* 電影寬銀幕遮幅與暗角 (Cinematic Vignette & Letterbox) */
+    .cinematic-vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 5;
+      background: radial-gradient(circle at center, transparent 52%, rgba(4, 6, 10, 0.72) 100%);
+      box-shadow: inset 0 0 110px rgba(0, 0, 0, 0.85);
+    }
+
+    /* 電影膠片微顆粒濾鏡 (Subtle Film Grain) */
+    .film-grain {
+      position: fixed;
+      inset: -50%;
+      width: 200%;
+      height: 200%;
+      pointer-events: none;
+      z-index: 6;
+      opacity: 0.045;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+      animation: grainShift 0.6s steps(4) infinite;
+    }
+
+    @keyframes grainShift {
+      0% { transform: translate(0, 0); }
+      25% { transform: translate(-2%, 2%); }
+      50% { transform: translate(2%, -1%); }
+      75% { transform: translate(-1%, -2%); }
+      100% { transform: translate(1%, 1%); }
+    }
+
+    /* 電影上下遮幅黑邊 (可切換) */
+    .letterbox-bar {
+      position: fixed;
+      left: 0;
+      width: 100%;
+      height: 0vh;
+      background: #030406;
+      z-index: 7;
+      pointer-events: none;
+      transition: height 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .letterbox-bar.top { top: 0; }
+    .letterbox-bar.bottom { bottom: 0; }
+    body.cinema-bars .letterbox-bar {
+      height: 5.5vh;
+    }
+
+    .font-cinzel {
+      font-family: 'Cinzel', 'Noto Serif TC', serif;
+    }
+
+    /* 磨砂玻璃質感面板 */
+    .glass-hud {
+      background: rgba(12, 15, 22, 0.58);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 232, 195, 0.14);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+    }
+
+    .hud-btn {
+      transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .hud-btn:hover {
+      background: rgba(245, 190, 110, 0.18);
+      border-color: rgba(245, 190, 110, 0.45);
+      transform: translateY(-1px);
+    }
+    .hud-btn.active {
+      background: linear-gradient(135deg, rgba(217, 146, 59, 0.36), rgba(168, 92, 34, 0.28));
+      border-color: rgba(251, 198, 120, 0.75);
+      color: #ffedd5;
+      box-shadow: 0 0 16px rgba(245, 166, 66, 0.28);
+    }
+
+    /* 載入過場動畫 */
+    .virtual-joystick {
+      position: fixed;
+      right: max(22px, env(safe-area-inset-right));
+      left: auto;
+      bottom: max(22px, env(safe-area-inset-bottom));
+      width: 124px;
+      height: 124px;
+      z-index: 40;
+      opacity: 0;
+      pointer-events: none;
+      touch-action: none;
+      user-select: none;
+      transition: opacity 420ms ease;
+    }
+    body.ready .virtual-joystick {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .virtual-joystick__base {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 1px solid rgba(244, 218, 174, 0.26);
+      background:
+        radial-gradient(circle at 42% 38%, rgba(244, 205, 145, 0.10), rgba(28, 20, 14, 0.26) 62%),
+        rgba(34, 24, 17, 0.24);
+      box-shadow:
+        inset 0 0 22px rgba(0, 0, 0, 0.28),
+        0 10px 28px rgba(0, 0, 0, 0.14);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
+      transition: border-color 180ms ease, background-color 180ms ease;
+    }
+    .virtual-joystick.is-active .virtual-joystick__base {
+      border-color: rgba(251, 211, 150, 0.44);
+      background-color: rgba(52, 37, 24, 0.28);
+    }
+    .virtual-joystick__knob {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 46px;
+      height: 46px;
+      margin: -23px 0 0 -23px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 229, 187, 0.42);
+      background: rgba(214, 176, 116, 0.26);
+      box-shadow:
+        inset 0 0 12px rgba(232, 242, 235, 0.12),
+        0 4px 14px rgba(0, 0, 0, 0.2);
+      will-change: transform;
+      transition: transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1), background-color 180ms ease;
+    }
+    .virtual-joystick.is-active .virtual-joystick__knob {
+      background: rgba(235, 197, 137, 0.36);
+      transition: transform 60ms linear, background-color 180ms ease;
+    }
+
+    .umbrella-pickup {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 34;
+      width: 44px;
+      height: 44px;
+      color: rgba(214, 231, 220, 0.9);
+      border: 1px solid rgba(197, 220, 206, 0.34);
+      border-radius: 50%;
+      background: rgba(12, 25, 19, 0.44);
+      box-shadow: 0 5px 18px rgba(0, 0, 0, 0.18), inset 0 0 14px rgba(188, 216, 199, 0.06);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      pointer-events: none;
+      opacity: 0;
+      transform: translate3d(-100px, -100px, 0) translate(-50%, -50%);
+      transition: opacity 180ms ease, transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+    }
+    .umbrella-pickup.is-visible {
+      opacity: 1;
+      pointer-events: auto;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .umbrella-pickup--static.is-visible {
+      pointer-events: none;
+      cursor: default;
+    }
+    .umbrella-pickup__icon {
+      position: absolute;
+      inset: 10px;
+      width: 24px;
+      height: 24px;
+      overflow: visible;
+      opacity: 0.7;
+      transform: rotate(-90deg);
+    }
+    .umbrella-pickup--phone .umbrella-pickup__icon {
+      transform: none;
+    }
+    .umbrella-pickup--phone {
+      color: rgba(244, 218, 174, 0.95);
+      border-color: rgba(244, 218, 174, 0.4);
+      background: rgba(39, 30, 23, 0.58);
+    }
+    .umbrella-pickup--leave .umbrella-pickup__icon {
+      transform: none;
+    }
+    .umbrella-pickup--leave {
+      color: rgba(244, 218, 174, 0.96);
+      border-color: rgba(244, 218, 174, 0.42);
+      background: rgba(39, 30, 23, 0.62);
+    }
+    .umbrella-pickup--leave .umbrella-pickup__ring {
+      border-color: rgba(244, 218, 174, 0.32);
+    }
+    .umbrella-pickup__ring {
+      position: absolute;
+      inset: -4px;
+      border: 1px solid rgba(198, 225, 208, 0.32);
+      border-radius: 50%;
+      opacity: 0;
+    }
+    .umbrella-pickup.is-visible .umbrella-pickup__ring {
+      animation: umbrella-pickup-pulse 2.4s ease-out infinite;
+    }
+    @keyframes umbrella-pickup-pulse {
+      0% { opacity: 0.32; transform: scale(0.9); }
+      75%, 100% { opacity: 0; transform: scale(1.28); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .umbrella-pickup, .umbrella-pickup__ring { animation: none; transition: none; }
+    }
+
+    .yuri-dialogue {
+      position: fixed;
+      left: 50%;
+      bottom: clamp(88px, 12vh, 136px);
+      z-index: 8;
+      width: min(560px, calc(100vw - 40px));
+      padding: 16px 22px 18px;
+      transform: translate(-50%, 12px);
+      background: rgba(39, 30, 23, 0.84);
+      border: 1px solid rgba(244, 218, 174, 0.5);
+      border-radius: 2px;
+      box-shadow: 0 16px 45px rgba(25, 16, 9, 0.35);
+      backdrop-filter: blur(10px);
+      color: #f5e8d2;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 350ms ease, transform 450ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 350ms;
+    }
+    .yuri-dialogue.is-visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translate(-50%, 0);
+      pointer-events: auto;
+      cursor: pointer;
+    }
+    .yuri-dialogue__speaker {
+      color: rgba(244, 218, 174, 0.82);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.24em;
+      text-transform: uppercase;
+    }
+    .yuri-dialogue__line {
+      margin: 7px 0 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(17px, 1.8vw, 22px);
+      line-height: 1.42;
+      letter-spacing: 0.01em;
+    }
+    @media (max-width: 720px), (max-height: 520px) {
+      .yuri-dialogue { bottom: 132px; padding: 14px 18px 16px; }
+    }
+
+    .brand {
+      position: fixed;
+      top: clamp(22px, 4vw, 48px);
+      left: clamp(22px, 4vw, 56px);
+      z-index: 5;
+      pointer-events: none;
+      color: #f8ecd9;
+      text-shadow: 0 2px 20px rgba(49, 32, 14, 0.32);
+    }
+    .brand .eyebrow {
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      opacity: 0.82;
+      margin-bottom: 9px;
+      font-weight: 600;
+    }
+    .brand h1 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(24px, 3.4vw, 41px);
+      font-weight: 400;
+      letter-spacing: 0.012em;
+      line-height: 1;
+    }
+    .brand p {
+      margin: 11px 0 0;
+      font-size: 11px;
+      letter-spacing: 0.11em;
+      color: rgba(255, 247, 233, 0.74);
+      font-weight: 400;
+    }
+    .loader-copy {
+      text-align: center;
+      margin-bottom: 30px;
+      color: #f8ecd9;
+      text-shadow: 0 2px 18px rgba(49, 32, 14, 0.4);
+    }
+    .loader-copy h2 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(28px, 4vw, 46px);
+      font-weight: 400;
+      letter-spacing: 0.01em;
+    }
+    .loader-copy p {
+      margin: 12px 0 0;
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      color: rgba(255, 247, 233, 0.68);
+      text-transform: uppercase;
+    }
+    .loader-spinner {
+      width: 26px;
+      height: 26px;
+      margin: 0 auto 18px;
+      border-radius: 50%;
+      border: 1px solid rgba(244, 218, 174, 0.24);
+      border-top-color: rgba(244, 218, 174, 0.78);
+      animation: loader-turn 1.2s linear infinite;
+    }
+    @keyframes loader-turn {
+      to { transform: rotate(360deg); }
+    }
+    @media (max-width: 720px) {
+      .brand p { display: none; }
+    }
+
+    #loader-screen {
+      transition: opacity 1s ease, visibility 1s ease;
+    }
+    #loader-screen.hidden-loader {
+      opacity: 0;
+      visibility: hidden;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 載入畫面 -->
+  <aside id="yuriDialogue" class="yuri-dialogue" role="status" aria-live="polite" aria-hidden="true">
+    <div class="yuri-dialogue__speaker">You</div>
+    <p class="yuri-dialogue__line"></p>
+  </aside>
+
+  <header class="brand">
+    <div class="eyebrow">Yuri Rostovich (1952–2025)</div>
+    <h1>Broken Face</h1>
+    <p>A rainy street in the last warm hour</p>
+  </header>
+
+  <div id="loader-screen" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#07090e]">
+    <div class="loader-copy">
+      <div class="loader-spinner"></div>
+      <h2>Broken Face</h2>
+      <p>Preparing the midnight</p>
+    </div>
+  </div>
+
+  <!-- 3D 畫布容器 -->
+  <div id="canvas-container"></div>
+
+  <!-- 電影視覺濾鏡層 -->
+  <div class="cinematic-vignette"></div>
+  <div class="film-grain"></div>
+
+  <!-- 頂部電影標題與狀態列 -->
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { VRMLoaderPlugin } from '@pixiv/three-vrm';
+    import { createAudience } from './audience.js?v=51';
+    import { createJoystick } from './joystick.js?v=51';
+    import { createPickupPrompt } from './pickupPrompt.js?v=4';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+    // ============================================================================
+    // 1. 程式化紋理工廠 (Procedural High-Res Canvas Textures)
+    //    確保無任何外部圖片依賴，同時具有法線/粗糙度/自發光貼圖細節
+    // ============================================================================
+    const TextureFactory = {
+      // 濕潤鵝卵石路面貼圖（含水窪低粗糙度區域與凸起凹凸貼圖）
+      createCobblestoneTextures() {
+        const size = 1024;
+        const diffCanvas = document.createElement('canvas');
+        const roughCanvas = document.createElement('canvas');
+        const bumpCanvas = document.createElement('canvas');
+        diffCanvas.width = roughCanvas.width = bumpCanvas.width = size;
+        diffCanvas.height = roughCanvas.height = bumpCanvas.height = size;
+
+        const dCtx = diffCanvas.getContext('2d');
+        const rCtx = roughCanvas.getContext('2d');
+        const bCtx = bumpCanvas.getContext('2d');
+
+        // 底色（石縫泥沙）
+        dCtx.fillStyle = '#15181e';
+        dCtx.fillRect(0, 0, size, size);
+
+        // 預設粗糙度為中等偏濕 (0.45 -> 灰階 115)
+        rCtx.fillStyle = 'rgb(115, 115, 115)';
+        rCtx.fillRect(0, 0, size, size);
+
+        bCtx.fillStyle = 'rgb(25, 25, 25)';
+        bCtx.fillRect(0, 0, size, size);
+
+        // 繪製交錯排列的鵝卵石磚塊
+        const rows = 28;
+        const cols = 16;
+        const rowH = size / rows;
+        const colW = size / cols;
+
+        for (let r = 0; r < rows; r++) {
+          const offsetX = (r % 2) * (colW * 0.5);
+          for (let c = -1; c <= cols; c++) {
+            const x = c * colW + offsetX + (Math.random() - 0.5) * 4;
+            const y = r * rowH + (Math.random() - 0.5) * 2;
+            const w = colW - 5;
+            const h = rowH - 4;
+
+            // 石塊色彩變化（藍灰、暖褐、深板岩色）
+            const shade = 34 + Math.floor(Math.random() * 26);
+            const warmShift = Math.floor(Math.random() * 8);
+            dCtx.fillStyle = `rgb(${shade + warmShift}, ${shade + 2}, ${shade + 7})`;
+            this._roundRect(dCtx, x + 2, y + 2, w, h, 7);
+            dCtx.fill();
+
+            // 頂部微高光邊緣
+            dCtx.strokeStyle = `rgba(140, 155, 175, 0.16)`;
+            dCtx.lineWidth = 1.5;
+            dCtx.stroke();
+
+            // 凹凸貼圖（石塊中心高起）
+            const bGrad = bCtx.createRadialGradient(x + w / 2, y + h / 2, 2, x + w / 2, y + h / 2, w * 0.65);
+            bGrad.addColorStop(0, 'rgb(235, 235, 235)');
+            bGrad.addColorStop(0.75, 'rgb(165, 165, 165)');
+            bGrad.addColorStop(1, 'rgb(40, 40, 40)');
+            bCtx.fillStyle = bGrad;
+            this._roundRect(bCtx, x + 2, y + 2, w, h, 7);
+            bCtx.fill();
+
+            // 石塊表面粗糙度（略高於水窪，呈現濕潤反光感）
+            const rVal = 85 + Math.floor(Math.random() * 45);
+            rCtx.fillStyle = `rgb(${rVal}, ${rVal}, ${rVal})`;
+            this._roundRect(rCtx, x + 2, y + 2, w, h, 7);
+            rCtx.fill();
+          }
+        }
+
+        // 繪製有機形狀的積水水窪（極低粗糙度 = 鏡面反射街燈與霓虹！）
+        for (let i = 0; i < 9; i++) {
+          const px = Math.random() * size;
+          const py = Math.random() * size;
+          const prx = 70 + Math.random() * 140;
+          const pry = 45 + Math.random() * 110;
+
+          // 在平鋪邊界重複繪製以保持無縫貼圖
+          for (let ox of [-size, 0, size]) {
+            for (let oy of [-size, 0, size]) {
+              const pGrad = rCtx.createRadialGradient(px + ox, py + oy, 10, px + ox, py + oy, prx);
+              pGrad.addColorStop(0, 'rgb(8, 8, 8)');     // 鏡面積水中心
+              pGrad.addColorStop(0.65, 'rgb(22, 22, 22)');
+              pGrad.addColorStop(1, 'rgba(100, 100, 100, 0)');
+              rCtx.fillStyle = pGrad;
+              rCtx.beginPath();
+              rCtx.ellipse(px + ox, py + oy, prx, pry, Math.random() * Math.PI, 0, Math.PI * 2);
+              rCtx.fill();
+
+              // 水窪處漫反射略深
+              const dGrad = dCtx.createRadialGradient(px + ox, py + oy, 10, px + ox, py + oy, prx);
+              dGrad.addColorStop(0, 'rgba(8, 11, 16, 0.55)');
+              dGrad.addColorStop(1, 'rgba(8, 11, 16, 0)');
+              dCtx.fillStyle = dGrad;
+              dCtx.beginPath();
+              dCtx.ellipse(px + ox, py + oy, prx, pry, 0, 0, Math.PI * 2);
+              dCtx.fill();
+            }
+          }
+        }
+
+        const map = new THREE.CanvasTexture(diffCanvas);
+        const roughnessMap = new THREE.CanvasTexture(roughCanvas);
+        const bumpMap = new THREE.CanvasTexture(bumpCanvas);
+
+        [map, roughnessMap, bumpMap].forEach(t => {
+          t.wrapS = THREE.RepeatWrapping;
+          t.wrapT = THREE.RepeatWrapping;
+          t.repeat.set(4, 36);
+          t.anisotropy = 8;
+        });
+        map.colorSpace = THREE.SRGBColorSpace;
+
+        return { map, roughnessMap, bumpMap };
+      },
+
+      // 維多利亞復古紅磚牆紋理
+      createBrickTextures(baseHue = 'red') {
+        const size = 512;
+        const diffCanvas = document.createElement('canvas');
+        const bumpCanvas = document.createElement('canvas');
+        diffCanvas.width = bumpCanvas.width = size;
+        diffCanvas.height = bumpCanvas.height = size;
+
+        const dCtx = diffCanvas.getContext('2d');
+        const bCtx = bumpCanvas.getContext('2d');
+
+        // 灰漿底色
+        dCtx.fillStyle = '#3b3632';
+        dCtx.fillRect(0, 0, size, size);
+        bCtx.fillStyle = '#303030';
+        bCtx.fillRect(0, 0, size, size);
+
+        const rows = 16;
+        const cols = 8;
+        const rowH = size / rows;
+        const colW = size / cols;
+
+        for (let r = 0; r < rows; r++) {
+          const offset = (r % 2) * (colW * 0.5);
+          for (let c = -1; c <= cols; c++) {
+            const x = c * colW + offset;
+            const y = r * rowH;
+            const w = colW - 3;
+            const h = rowH - 3;
+
+            let R, G, B;
+            const v = Math.random();
+            if (baseHue === 'red') {
+              R = 95 + Math.floor(v * 42);
+              G = 42 + Math.floor(v * 20);
+              B = 34 + Math.floor(v * 16);
+            } else if (baseHue === 'ochre') {
+              // 倫敦黃褐色老磚 (London Stock Brick)
+              R = 118 + Math.floor(v * 35);
+              G = 98 + Math.floor(v * 28);
+              B = 68 + Math.floor(v * 20);
+            } else {
+              // 煙燻深褐磚
+              R = 72 + Math.floor(v * 28);
+              G = 48 + Math.floor(v * 18);
+              B = 42 + Math.floor(v * 15);
+            }
+
+            dCtx.fillStyle = `rgb(${R}, ${G}, ${B})`;
+            dCtx.fillRect(x + 1.5, y + 1.5, w, h);
+
+            // 磚面歲月斑駁感
+            if (Math.random() > 0.65) {
+              dCtx.fillStyle = 'rgba(15, 12, 10, 0.25)';
+              dCtx.fillRect(x + 1.5, y + 1.5, w, h);
+            }
+
+            bCtx.fillStyle = `rgb(${180 + Math.floor(v * 50)}, ${180 + Math.floor(v * 50)}, ${180 + Math.floor(v * 50)})`;
+            bCtx.fillRect(x + 1.5, y + 1.5, w, h);
+          }
+        }
+
+        // 添加雨水垂直流淌痕跡（增加電影真實舊化感）
+        for (let i = 0; i < 24; i++) {
+          const sx = Math.random() * size;
+          const grad = dCtx.createLinearGradient(0, 0, 0, size);
+          grad.addColorStop(0, 'rgba(10, 12, 14, 0.35)');
+          grad.addColorStop(0.5, 'rgba(10, 12, 14, 0.12)');
+          grad.addColorStop(1, 'rgba(10, 12, 14, 0.28)');
+          dCtx.fillStyle = grad;
+          dCtx.fillRect(sx, 0, 4 + Math.random() * 12, size);
+        }
+
+        const map = new THREE.CanvasTexture(diffCanvas);
+        const bumpMap = new THREE.CanvasTexture(bumpCanvas);
+        [map, bumpMap].forEach(t => {
+          t.wrapS = THREE.RepeatWrapping;
+          t.wrapT = THREE.RepeatWrapping;
+          t.repeat.set(2, 3);
+        });
+        map.colorSpace = THREE.SRGBColorSpace;
+        return { map, bumpMap };
+      },
+
+      // 花崗岩人行道石板紋理
+      createSidewalkTexture() {
+        const size = 512;
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = '#252930';
+        ctx.fillRect(0, 0, size, size);
+
+        const rows = 4;
+        const cols = 4;
+        const w = size / cols;
+        const h = size / rows;
+
+        for (let r = 0; r < rows; r++) {
+          const off = (r % 2) * (w * 0.5);
+          for (let c = -1; c <= cols; c++) {
+            const shade = 52 + Math.floor(Math.random() * 18);
+            ctx.fillStyle = `rgb(${shade}, ${shade + 3}, ${shade + 7})`;
+            ctx.fillRect(c * w + off + 2, r * h + 2, w - 4, h - 4);
+          }
+        }
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(2, 48);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      },
+
+      // 透光維多利亞窗戶紋理（帶窗格與室內暖光剪影）
+      createWindowTexture(lit = true, warmTone = '#ffb44c') {
+        const w = 256;
+        const h = 384;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+
+        if (lit) {
+          const grad = ctx.createRadialGradient(w * 0.5, h * 0.55, 10, w * 0.5, h * 0.5, h * 0.65);
+          grad.addColorStop(0, '#fff3d1');
+          grad.addColorStop(0.45, warmTone);
+          grad.addColorStop(1, '#7c3410');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, w, h);
+
+          // 室內模糊吊燈或窗簾剪影
+          ctx.fillStyle = 'rgba(45, 18, 6, 0.35)';
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.quadraticCurveTo(w * 0.25, h * 0.45, 0, h);
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.moveTo(w, 0);
+          ctx.quadraticCurveTo(w * 0.75, h * 0.45, w, h);
+          ctx.fill();
+        } else {
+          const grad = ctx.createLinearGradient(0, 0, w, h);
+          grad.addColorStop(0, '#16202e');
+          grad.addColorStop(0.5, '#0d131c');
+          grad.addColorStop(1, '#1c293a');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, w, h);
+        }
+
+        // 白色木製窗欞十字格 (Georgian Sash Window Bars)
+        ctx.fillStyle = '#e7e2d8';
+        // 外框
+        ctx.fillRect(0, 0, w, 14);
+        ctx.fillRect(0, h - 14, w, 14);
+        ctx.fillRect(0, 0, 14, h);
+        ctx.fillRect(w - 14, 0, 14, h);
+        // 中間橫推拉窗樑
+        ctx.fillRect(0, h * 0.48, w, 12);
+        // 細窗格
+        ctx.fillRect(w * 0.33, 0, 5, h);
+        ctx.fillRect(w * 0.66, 0, 5, h);
+        ctx.fillRect(0, h * 0.24, w, 5);
+        ctx.fillRect(0, h * 0.74, w, 5);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      },
+
+      // 店鋪匾額招牌紋理
+      createSignTexture(title, subtitle, bgColor = '#112a1e', textColor = '#f5c767', borderColor = '#d49b35') {
+        const w = 1024;
+        const h = 256;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+
+        // 烤漆木板底色
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, w, h);
+
+        // 雙層金箔邊框
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 10;
+        ctx.strokeRect(18, 18, w - 36, h - 36);
+        ctx.lineWidth = 3;
+        ctx.strokeRect(30, 30, w - 60, h - 60);
+
+        // 無文字裝飾：中央細金線與菱形紋樣
+        ctx.fillStyle = textColor;
+        ctx.fillRect(w * 0.34, h * 0.45, w * 0.32, 4);
+        ctx.fillRect(w * 0.41, h * 0.57, w * 0.18, 2);
+        ctx.save();
+        ctx.translate(w / 2, h / 2);
+        ctx.rotate(Math.PI / 4);
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(-22, -22, 44, 44);
+        ctx.restore();
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      },
+
+      // 懸掛式復古酒館鐵藝招牌
+      createHangingSignTexture() {
+        const w = 512;
+        const h = 512;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = '#1b1410';
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.strokeStyle = '#e2ad47';
+        ctx.lineWidth = 14;
+        ctx.strokeRect(20, 20, w - 40, h - 40);
+
+        // 繪製金色皇冠與船錨圖騰
+        ctx.fillStyle = '#f4c158';
+        ctx.beginPath();
+        ctx.moveTo(170, 210);
+        ctx.lineTo(155, 135);
+        ctx.lineTo(210, 175);
+        ctx.lineTo(256, 120);
+        ctx.lineTo(302, 175);
+        ctx.lineTo(357, 135);
+        ctx.lineTo(342, 210);
+        ctx.closePath();
+        ctx.fill();
+
+        // 無文字裝飾：皇冠下方的金色橫線
+        ctx.fillStyle = '#f4c158';
+        ctx.fillRect(w * 0.34, 285, w * 0.32, 6);
+        ctx.fillRect(w * 0.4, 320, w * 0.2, 3);
+        ctx.fillRect(w * 0.31, 360, w * 0.38, 4);
+        ctx.fillStyle = '#d4b483';
+        ctx.fillRect(w * 0.42, 430, w * 0.16, 2);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      },
+
+      // 倫敦西敏寺區經典琺瑯路牌 (BAKER STREET W1)
+      createStreetSignTexture() {
+        const w = 512;
+        const h = 192;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = '#f4f1ea';
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.strokeStyle = '#1a1a1a';
+        ctx.lineWidth = 10;
+        ctx.strokeRect(10, 10, w - 20, h - 20);
+
+        // 無文字裝飾：黑白琺瑯路牌色塊
+        ctx.fillStyle = '#141414';
+        ctx.fillRect(w * 0.28, 38, w * 0.44, 8);
+        ctx.fillStyle = '#b91c1c';
+        ctx.fillRect(w * 0.34, 76, w * 0.32, 52);
+        ctx.fillStyle = '#141414';
+        ctx.fillRect(w * 0.3, 152, w * 0.4, 7);
+        ctx.fillStyle = '#f4f1ea';
+        ctx.fillRect(w * 0.47, 88, w * 0.06, 28);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      },
+
+      // 條紋遮陽篷紋理
+      createAwningTexture(color1 = '#6b141a', color2 = '#e8dec8') {
+        const w = 512;
+        const h = 256;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+
+        const stripes = 12;
+        const sw = w / stripes;
+        for (let i = 0; i < stripes; i++) {
+          ctx.fillStyle = i % 2 === 0 ? color1 : color2;
+          ctx.fillRect(i * sw, 0, sw, h);
+        }
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      },
+
+      // 柔和徑向光暈/煙霧粒子貼圖
+      createSoftParticleTexture() {
+        const size = 128;
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        const grad = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.45)');
+        grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, size, size);
+
+        return new THREE.CanvasTexture(canvas);
+      },
+
+      _roundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      }
+    };
+
+    // ============================================================================
+    // 2. Web Audio API 合成倫敦雨夜環境音效 (無外部音檔依賴)
+    // ============================================================================
+    class RainAmbienceAudio {
+      constructor() {
+        this.ctx = null;
+        this.isPlaying = false;
+        this.masterGain = null;
+      }
+
+      toggle() {
+        if (!this.ctx) {
+          this._init();
+        }
+        if (this.isPlaying) {
+          this.masterGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.4);
+          this.isPlaying = false;
+        } else {
+          if (this.ctx.state === 'suspended') this.ctx.resume();
+          this.masterGain.gain.setTargetAtTime(0.28, this.ctx.currentTime, 0.6);
+          this.isPlaying = true;
+        }
+        return this.isPlaying;
+      }
+
+      _init() {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioCtx();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 0.0001;
+        this.masterGain.connect(this.ctx.destination);
+
+        // 生成 4 秒粉紅噪聲緩衝區模擬細雨聲
+        const bufferSize = this.ctx.sampleRate * 4;
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+        for (let i = 0; i < bufferSize; i++) {
+          const white = Math.random() * 2 - 1;
+          b0 = 0.99886 * b0 + white * 0.0555179;
+          b1 = 0.99332 * b1 + white * 0.0750759;
+          b2 = 0.96900 * b2 + white * 0.1538520;
+          b3 = 0.86650 * b3 + white * 0.3104856;
+          b4 = 0.55000 * b4 + white * 0.5329522;
+          b5 = -0.7616 * b5 - white * 0.0168980;
+          data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.04;
+          b6 = white * 0.115926;
+        }
+
+        const rainSource = this.ctx.createBufferSource();
+        rainSource.buffer = buffer;
+        rainSource.loop = true;
+
+        // 帶通濾波讓雨聲聽起來更柔和細膩
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = 1100;
+        filter.Q.value = 0.6;
+
+        // 城市低頻遠處嗡鳴 (City Rumble)
+        const cityOsc = this.ctx.createOscillator();
+        cityOsc.type = 'sine';
+        cityOsc.frequency.value = 58;
+        const cityGain = this.ctx.createGain();
+        cityGain.gain.value = 0.12;
+
+        rainSource.connect(filter);
+        filter.connect(this.masterGain);
+        cityOsc.connect(cityGain);
+        cityGain.connect(this.masterGain);
+
+        rainSource.start();
+        cityOsc.start();
+      }
+    }
+
+    // ============================================================================
+    // 3. 主場景初始化與渲染管線
+    // ============================================================================
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x090d16);
+    scene.fog = new THREE.FogExp2(0x0c121e, 0.0175);
+
+    const camera = new THREE.PerspectiveCamera(44, window.innerWidth / window.innerHeight, 0.1, 220);
+    camera.position.set(0.8, 2.35, 22);
+    camera.zoom = 0.5;
+    camera.updateProjectionMatrix();
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.12;
+    container.appendChild(renderer.domElement);
+
+    // 軌道控制器 (OrbitControls)
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI * 0.49; // 防止鑽入地下
+    controls.minDistance = 3;
+    controls.maxDistance = 48;
+    controls.enablePan = false;
+    controls.enableRotate = true;
+    controls.enableZoom = true;
+    controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: null, RIGHT: null };
+    controls.touches.ONE = 0; // rotate
+    controls.touches.TWO = 3; // pinch zoom + rotate
+    controls.target.set(0, 2.8, -4);
+
+    // Girl with Butterfly audience, walking animation and bottom-left joystick.
+    const audience = createAudience({
+      position: new THREE.Vector3(-5.8, 0.18, 12.5),
+      rotation: 2.78,
+      onReady: () => console.log('[Audience] VRM and walking clip ready.'),
+      onError: (error) => console.warn('[Audience] Failed to load.', error),
+    });
+    audience.scale.setScalar(1.0);
+    audience.userData.setFenceCollision?.(false);
+    scene.add(audience);
+
+    const audienceObstacles = [
+      new THREE.Box3(new THREE.Vector3(-20, 0, -20), new THREE.Vector3(-7.7, 6, 20)),
+      new THREE.Box3(new THREE.Vector3(7.7, 0, -20), new THREE.Vector3(20, 6, 20)),
+      new THREE.Box3(new THREE.Vector3(4.85, 0, 7.2), new THREE.Vector3(6.45, 5, 9.2)),
+      new THREE.Box3(new THREE.Vector3(-6.25, 0, -15.2), new THREE.Vector3(-5.05, 3, -13.8)),
+      new THREE.Box3(new THREE.Vector3(-4.9, 0, -31.8), new THREE.Vector3(-1.3, 3.4, -24.2))
+    ];
+    audience.userData.setObstacles?.(audienceObstacles);
+    const joystick = createJoystick();
+    joystick.element.style.display = 'none';
+    joystick.element.style.pointerEvents = 'none';
+    window.addEventListener('joystickmove', (event) => {
+      if (!redCarFinished) {
+        audience.userData.setMoveInput?.({ x: 0, y: 0, magnitude: 0 });
+        return;
+      }
+      audience.userData.setMoveInput?.(event.detail);
+    });
+    window.__audience = audience;
+    window.__gardenJoystick = joystick;
+
+    const phonePromptSpecs = [
+      { x: 5.65, z: 8.2 },
+      { x: -5.65, z: -14.5 }
+    ];
+    let phoneAnswered = false;
+    let activePhoneSpec = null;
+    let leavePrompt = null;
+    const audienceHandset = new THREE.Group();
+    const handsetMat = new THREE.MeshStandardMaterial({ color: 0x151311, roughness: 0.48, metalness: 0.25 });
+    const handsetBar = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.28, 0.07), handsetMat);
+    audienceHandset.add(handsetBar);
+    for (const y of [-0.13, 0.13]) {
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.055, 14), handsetMat);
+      cup.rotation.z = Math.PI / 2;
+      cup.position.y = y;
+      audienceHandset.add(cup);
+    }
+    audienceHandset.visible = false;
+
+    const startPhoneCall = (spec) => {
+      if (phoneAnswered) return;
+      phoneAnswered = true;
+      activePhoneSpec = spec;
+      const boothPhone = new THREE.Vector3(spec.x, 2.7, spec.z);
+      audienceHandset.visible = true;
+      audience.userData.answerPhone?.(boothPhone, audienceHandset);
+    };
+
+    const showLeavePrompt = () => {
+      if (!activePhoneSpec) return;
+      if (!leavePrompt) {
+        leavePrompt = createPickupPrompt({
+          anchor: new THREE.Vector3(activePhoneSpec.x, 3.9, activePhoneSpec.z),
+          camera,
+          icon: 'leave',
+          interactive: true,
+          onPickup: () => {
+            leavePrompt?.disable?.();
+            leavePrompt = null;
+            audience.userData.leavePhone?.();
+          }
+        });
+      }
+      leavePrompt.setVisible(true);
+      leavePrompt.update();
+    };
+
+    const phonePrompts = phonePromptSpecs.map((spec) => ({
+      ...spec,
+      prompt: createPickupPrompt({
+        anchor: new THREE.Vector3(spec.x, 3.9, spec.z),
+        camera,
+        icon: 'phone',
+        interactive: true,
+        onPickup: () => startPhoneCall(spec)
+      })
+    }));
+
+    const dialogueElement = document.querySelector('#yuriDialogue');
+    const dialogueSpeakerElement = dialogueElement?.querySelector('.yuri-dialogue__speaker');
+    const dialogueLineElement = dialogueElement?.querySelector('.yuri-dialogue__line');
+    const dialogueLines = [
+      { speaker: 'You', line: 'Hello! I’m at 17 Lenina Street. There’s been a car crash, and a girl is hurt. Please send help right away.' },
+      { speaker: 'Dispatcher', line: 'Copy that. Ambulance and police are being dispatched.' },
+      { speaker: 'You', line: 'Thank You.' }
+    ];
+    let dialogueIndex = -1;
+    let yuriHelpOpen = false;
+    let yuriHelpShown = false;
+    let yuriHelpSeen = false;
+    let emergencyTouchOpen = false;
+
+    const showDialogueLine = (index) => {
+      if (!dialogueElement || !dialogueSpeakerElement || !dialogueLineElement || !dialogueLines[index]) return;
+      dialogueIndex = index;
+      dialogueSpeakerElement.textContent = dialogueLines[index].speaker;
+      dialogueLineElement.textContent = dialogueLines[index].line;
+      dialogueElement.classList.add('is-visible');
+      dialogueElement.setAttribute('aria-hidden', 'false');
+    };
+
+    const showYuriHelp = () => {
+      if (yuriHelpShown || !dialogueElement || !dialogueSpeakerElement || !dialogueLineElement) return;
+      yuriHelpShown = true;
+      yuriHelpOpen = true;
+      dialogueSpeakerElement.textContent = '???';
+      dialogueLineElement.textContent = 'Help me, my nose really hurts...';
+      dialogueElement.classList.add('is-visible');
+      dialogueElement.setAttribute('aria-hidden', 'false');
+    };
+
+    const setEmergencyTouchDialogue = (active) => {
+      if (active) {
+        if (emergencyTouchOpen || yuriHelpOpen || dialogueIndex >= 0) return;
+        emergencyTouchOpen = true;
+        dialogueSpeakerElement.textContent = '???';
+        dialogueLineElement.textContent = 'Thank you...';
+        dialogueElement.classList.add('is-visible');
+        dialogueElement.setAttribute('aria-hidden', 'false');
+      } else if (emergencyTouchOpen) {
+        emergencyTouchOpen = false;
+        dialogueElement?.classList.remove('is-visible');
+        dialogueElement?.setAttribute('aria-hidden', 'true');
+      }
+    };
+
+    const advanceDialogue = () => {
+      if (emergencyTouchOpen) return;
+      if (yuriHelpOpen) {
+        yuriHelpOpen = false;
+        yuriHelpSeen = true;
+        dialogueElement?.classList.remove('is-visible');
+        dialogueElement?.setAttribute('aria-hidden', 'true');
+        return;
+      }
+      if (dialogueIndex < 0) {
+        showDialogueLine(0);
+      } else if (dialogueIndex < dialogueLines.length - 1) {
+        showDialogueLine(dialogueIndex + 1);
+      } else {
+        dialogueElement?.classList.remove('is-visible');
+        dialogueElement?.setAttribute('aria-hidden', 'true');
+        dialogueIndex = -1;
+        showLeavePrompt();
+      }
+    };
+
+    dialogueElement?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      advanceDialogue();
+    });
+    window.addEventListener('audiencephone', () => showDialogueLine(0));
+
+    // Emergency vehicles arrive after the phone call and exit.
+    const emergencyVehicles = [];
+    let emergencyRequested = false;
+    let emergencyStarted = false;
+    let emergencyArrived = false;
+    let emergencyCollidersRegistered = false;
+
+    const normalizeEmergencyModel = (source, targetLength, yOffset = 0.02) => {
+      source.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(source);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      bounds.getSize(size);
+      bounds.getCenter(center);
+      const scale = targetLength / Math.max(0.001, size.z);
+      source.scale.setScalar(scale);
+      source.position.set(
+        -center.x * scale,
+        -bounds.min.y * scale + yOffset,
+        -center.z * scale
+      );
+      source.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+    };
+
+    const addEmergencyHeadlights = (carrier, targetLength, bodyY = 1.1, lampX = 0.72) => {
+      const frontZ = targetLength * 0.47;
+      const rearZ = -frontZ;
+      const headlightMat = new THREE.MeshStandardMaterial({
+        color: 0xfff3d6,
+        emissive: new THREE.Color(0xffe19c),
+        emissiveIntensity: 3.2,
+        roughness: 0.22
+      });
+      for (const side of [-1, 1]) {
+        const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.08, 14), headlightMat);
+        lens.rotation.x = Math.PI / 2;
+        lens.position.set(side * lampX, bodyY, frontZ);
+        carrier.add(lens);
+      }
+      const beam = new THREE.SpotLight(0xffe4a8, 14, 24, Math.PI * 0.18, 0.55, 1.4);
+      beam.position.set(0, bodyY, frontZ);
+      beam.target.position.set(0, 0.2, frontZ + 14);
+      carrier.add(beam);
+      carrier.add(beam.target);
+
+      const tailMat = new THREE.MeshStandardMaterial({
+        color: 0xff2a2a,
+        emissive: new THREE.Color(0xff1e1e),
+        emissiveIntensity: 4.2,
+        roughness: 0.3
+      });
+      for (const side of [-1, 1]) {
+        const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.10, 14), tailMat);
+        tail.rotation.x = Math.PI / 2;
+        tail.position.set(side * lampX * 1.12, bodyY - 0.2, rearZ);
+        carrier.add(tail);
+        const tailGlow = new THREE.PointLight(0xff1a1a, 2.4, 2.8, 2.0);
+        tailGlow.position.set(side * lampX * 1.12, bodyY - 0.18, rearZ - 0.05);
+        carrier.add(tailGlow);
+      }
+    };
+
+    const addEmergencyVehicle = (path, targetLength, stopZ, delay, duration, x = 1.6) => {
+      new GLTFLoader().load(path, (gltf) => {
+        const carrier = new THREE.Group();
+        carrier.position.set(x, 0, -46);
+        carrier.visible = false;
+        scene.add(carrier);
+        const model = gltf.scene;
+        normalizeEmergencyModel(model, targetLength);
+        carrier.add(model);
+        addEmergencyHeadlights(carrier, targetLength, 1.35, 1.12);
+        emergencyVehicles.push({
+          group: carrier,
+          kind: 'ambulance',
+          x,
+          startX: x,
+          stopX: x,
+          startZ: -46,
+          stopZ,
+          delay,
+          duration,
+          t: 0,
+          active: false
+        });
+        if (emergencyRequested) startEmergency();
+      }, undefined, (error) => console.warn('[Emergency] Failed to load.', path, error));
+    };
+
+    const addPoliceVehicle = (path, targetLength, stopZ, delay, duration, x = 1.6) => {
+      new GLTFLoader().load(path, (gltf) => {
+        // Clone both cars before normalizing either one, so both receive the
+        // exact same raw-model scale and end up the same size.
+        const policeModels = [gltf.scene, gltf.scene.clone(true)];
+        for (let i = 0; i < 2; i++) {
+          const carrier = new THREE.Group();
+          carrier.position.set(x, 0, -58 - i * 12);
+          carrier.visible = false;
+          scene.add(carrier);
+          const model = policeModels[i];
+          normalizeEmergencyModel(model, targetLength);
+          carrier.add(model);
+          addEmergencyHeadlights(carrier, targetLength, 0.95, 0.88);
+          emergencyVehicles.push({
+            group: carrier,
+            kind: 'police',
+            x,
+            startX: x,
+            stopX: x,
+            startZ: -58 - i * 12,
+            stopZ: stopZ - i * 8.5,
+            delay: delay + i * 0.45,
+            duration,
+            t: 0,
+            active: false
+          });
+        }
+        if (emergencyRequested) startEmergency();
+      }, undefined, (error) => console.warn('[Emergency] Failed to load police.', path, error));
+    };
+
+    const startEmergency = () => {
+      if (emergencyStarted || emergencyVehicles.length < 3) return;
+      emergencyStarted = true;
+      const yuriZ = yuriRideRig?.root.position.z ?? -1.6;
+      const yuriX = yuriRideRig?.root.position.x ?? 0;
+      const ambulance = emergencyVehicles.find((vehicle) => vehicle.kind === 'ambulance');
+      const police = emergencyVehicles.filter((vehicle) => vehicle.kind === 'police');
+      if (ambulance) {
+        ambulance.stopZ = yuriZ + 2.0;
+        ambulance.stopX = THREE.MathUtils.clamp(yuriX - 3.8, -2.8, 2.0);
+      }
+      police.forEach((vehicle, index) => {
+        vehicle.stopZ = yuriZ - 8.5 - index * 8.0;
+        vehicle.stopX = 1.65;
+      });
+      const ordered = [ambulance, ...police].filter(Boolean);
+      for (const vehicle of ordered) {
+        vehicle.active = true;
+        vehicle.t = -vehicle.delay;
+        vehicle.group.visible = true;
+        vehicle.group.position.set(vehicle.startX, 0, vehicle.startZ);
+      }
+      if (!emergencyCollidersRegistered) {
+        emergencyCollidersRegistered = true;
+        for (const vehicle of ordered) {
+          vehicle.group.updateMatrixWorld(true);
+          const baseBox = new THREE.Box3().setFromObject(vehicle.group);
+          baseBox.expandByScalar(0.03);
+          vehicle.baseBox = baseBox;
+          vehicle.colliderOrigin = vehicle.group.position.clone();
+          vehicle.colliderBox = baseBox.clone();
+          audienceObstacles.push(vehicle.colliderBox);
+        }
+        audience.userData.setObstacles?.(audienceObstacles);
+      }
+    };
+
+    addEmergencyVehicle('./ambulance.glb', 8.0, -8, 0, 3.6, 1.65);
+    addPoliceVehicle('./police.glb', 7.0, -18, 0.55, 4.2, 1.65);
+    window.addEventListener('audienceleft', () => {
+      emergencyRequested = true;
+      startEmergency();
+    });
+
+    // 電影感後處理管線 (EffectComposer + UnrealBloomPass)
+    const composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.72,  // 泛光強度
+      0.55,  // 泛光半徑
+      0.78   // 高光閾值（讓路燈、招牌與霓虹自然暈開）
+    );
+    composer.addPass(bloomPass);
+
+    const outputPass = new OutputPass();
+    composer.addPass(outputPass);
+
+    // ============================================================================
+    // 4. 光照系統 (可隨氛圍時段動態切換)
+    // ============================================================================
+    const hemiLight = new THREE.HemisphereLight(0x3a527a, 0x1c1714, 0.75);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0x6d8ec4, 1.35);
+    dirLight.position.set(-18, 32, 16);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 2;
+    dirLight.shadow.camera.far = 95;
+    const d = 32;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    dirLight.shadow.bias = -0.0005;
+    scene.add(dirLight);
+
+    // 遠景天際光暈球體（營造倫敦夜空/暮色層次）
+    const skyDomeGeo = new THREE.SphereGeometry(120, 32, 16);
+    const skyDomeMat = new THREE.MeshBasicMaterial({
+      color: 0x0d1524,
+      side: THREE.BackSide,
+      fog: false
+    });
+    const skyDome = new THREE.Mesh(skyDomeGeo, skyDomeMat);
+    scene.add(skyDome);
+
+    // ============================================================================
+    // 5. 構建英倫復古街道與建築群
+    // ============================================================================
+    const streetLength = 192;
+    const roadWidth = 9.2;
+    const sidewalkWidth = 3.4;
+
+    // 5.1 濕潤鵝卵石主車道
+    const cobbleTex = TextureFactory.createCobblestoneTextures();
+    const roadMat = new THREE.MeshStandardMaterial({
+      map: cobbleTex.map,
+      roughnessMap: cobbleTex.roughnessMap,
+      bumpMap: cobbleTex.bumpMap,
+      bumpScale: 0.06,
+      roughness: 0.38,
+      metalness: 0.22
+    });
+    const roadMesh = new THREE.Mesh(new THREE.PlaneGeometry(roadWidth, streetLength), roadMat);
+    roadMesh.rotation.x = -Math.PI / 2;
+    roadMesh.position.z = -24;
+    roadMesh.receiveShadow = true;
+    scene.add(roadMesh);
+
+    // 5.2 兩側花崗岩人行道與路緣石 (Curbs)
+    const sidewalkTex = TextureFactory.createSidewalkTexture();
+    const sidewalkMat = new THREE.MeshStandardMaterial({
+      map: sidewalkTex,
+      roughness: 0.42,
+      metalness: 0.1
+    });
+    const curbMat = new THREE.MeshStandardMaterial({ color: 0x454a52, roughness: 0.5 });
+
+    [-1, 1].forEach(side => {
+      const xPos = side * (roadWidth / 2 + sidewalkWidth / 2);
+      const swMesh = new THREE.Mesh(new THREE.BoxGeometry(sidewalkWidth, 0.18, streetLength), sidewalkMat);
+      swMesh.position.set(xPos, 0.09, -24);
+      swMesh.receiveShadow = true;
+      scene.add(swMesh);
+
+      // 路緣石
+      const curb = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.21, streetLength), curbMat);
+      curb.position.set(side * (roadWidth / 2 + 0.1), 0.105, -24);
+      curb.receiveShadow = true;
+      scene.add(curb);
+    });
+
+    // 街道中央的斑馬線
+    const zebraMat = new THREE.MeshPhysicalMaterial({
+      color: 0xd8d8cf,
+      roughness: 0.36,
+      metalness: 0.02,
+      clearcoat: 0.7,
+      clearcoatRoughness: 0.22,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1
+    });
+    const zebraZ = -1.6;
+    const zebraStripeCount = 8;
+    const zebraSpacing = 0.98;
+    const zebraLength = 6.2;
+    for (let i = 0; i < zebraStripeCount; i++) {
+      const stripe = new THREE.Mesh(
+        new THREE.BoxGeometry(0.54, 0.016, zebraLength),
+        zebraMat
+      );
+      stripe.position.set(
+        (i - (zebraStripeCount - 1) / 2) * zebraSpacing,
+        0.012,
+        zebraZ
+      );
+      stripe.receiveShadow = true;
+      scene.add(stripe);
+    }
+
+    // ---------------------------------------------------------------------
+    // Yuri riding a bicycle at the zebra-crossing kerb
+    // ---------------------------------------------------------------------
+    const yuriBikeRoot = new THREE.Group();
+    yuriBikeRoot.position.set(6.0, 0.18, -16.5);
+    scene.add(yuriBikeRoot);
+
+    const bikeMetalMat = new THREE.MeshStandardMaterial({
+      color: 0x22262a, metalness: 0.88, roughness: 0.24
+    });
+    const bikeRedMat = new THREE.MeshStandardMaterial({
+      color: 0x6f1818, metalness: 0.5, roughness: 0.3
+    });
+    const bikeTireMat = new THREE.MeshStandardMaterial({
+      color: 0x0c0d0e, roughness: 0.82, metalness: 0.1
+    });
+    const bikeChromeMat = new THREE.MeshStandardMaterial({
+      color: 0xbfc4c8, metalness: 1.0, roughness: 0.18
+    });
+    const bikeSeatMat = new THREE.MeshStandardMaterial({
+      color: 0x2b1b13, roughness: 0.65, metalness: 0.05
+    });
+
+    function bikeTube(a, b, radius, material) {
+      const direction = new THREE.Vector3().subVectors(b, a);
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(radius, radius, direction.length(), 10),
+        material
+      );
+      mesh.position.copy(a).add(b).multiplyScalar(0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+      mesh.castShadow = true;
+      return mesh;
+    }
+
+    const bikeWheelGeo = new THREE.TorusGeometry(0.42, 0.035, 8, 28);
+    [-0.68, 0.68].forEach((wz) => {
+      const wheel = new THREE.Mesh(bikeWheelGeo, bikeTireMat);
+      wheel.rotation.y = Math.PI / 2;
+      wheel.position.set(0, 0.44, wz);
+      wheel.castShadow = true;
+      yuriBikeRoot.add(wheel);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.1, 10), bikeChromeMat);
+      hub.rotation.z = Math.PI / 2;
+      hub.position.set(0, 0.44, wz);
+      yuriBikeRoot.add(hub);
+    });
+
+    const rearAxle = new THREE.Vector3(0, 0.44, -0.68);
+    const frontAxle = new THREE.Vector3(0, 0.44, 0.68);
+    const bottomBracket = new THREE.Vector3(0, 0.46, 0);
+    const seatTop = new THREE.Vector3(0, 1.02, -0.22);
+    const headTop = new THREE.Vector3(0, 1.04, 0.47);
+    [
+      [rearAxle, bottomBracket, 0.032, bikeMetalMat],
+      [rearAxle, seatTop, 0.025, bikeMetalMat],
+      [bottomBracket, seatTop, 0.035, bikeRedMat],
+      [bottomBracket, headTop, 0.035, bikeRedMat],
+      [seatTop, headTop, 0.028, bikeMetalMat],
+      [headTop, frontAxle, 0.028, bikeChromeMat]
+    ].forEach(([a, b, radius, material]) => yuriBikeRoot.add(bikeTube(a, b, radius, material)));
+
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.06, 0.34), bikeSeatMat);
+    seat.position.set(0, 1.08, -0.24);
+    seat.castShadow = true;
+    yuriBikeRoot.add(seat);
+    const handleStem = bikeTube(new THREE.Vector3(0, 1.0, 0.47), new THREE.Vector3(0, 1.18, 0.51), 0.025, bikeChromeMat);
+    yuriBikeRoot.add(handleStem);
+    const handlebar = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.56, 10), bikeChromeMat);
+    handlebar.rotation.z = Math.PI / 2;
+    handlebar.position.set(0, 1.18, 0.52);
+    yuriBikeRoot.add(handlebar);
+
+    // Crank and pedals
+    const crank = new THREE.Group();
+    crank.position.set(0, 0.46, 0);
+    yuriBikeRoot.add(crank);
+    const crankArm = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.3, 0.04), bikeChromeMat);
+    crankArm.position.y = 0.13;
+    crank.add(crankArm);
+    const pedal = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.035, 0.09), bikeMetalMat);
+    pedal.position.set(0, 0.27, 0);
+    crank.add(pedal);
+
+    const yuriBikeLoader = new GLTFLoader();
+    yuriBikeLoader.register((parser) => new VRMLoaderPlugin(parser));
+    let yuriBikeVRM = null;
+    let yuriRideRig = null;
+    let yuriRidePhase = 3 * Math.PI / 4;
+    let yuriRideJourney = null;
+    let yuriFallState = null;
+    let yuriFallColliderAdded = false;
+    const yuriBodyColliders = [];
+    yuriBikeLoader.load(
+      './yuri.vrm',
+      (gltf) => {
+        const vrm = gltf.userData.vrm;
+        if (!vrm) return;
+        yuriBikeVRM = vrm;
+        vrm.scene.traverse((object) => {
+          if (!object.isMesh && !object.isSkinnedMesh) return;
+          object.frustumCulled = false;
+          object.castShadow = true;
+          object.receiveShadow = true;
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          for (const material of materials) {
+            if (!material) continue;
+            if (material.isOutline) {
+              material.colorWrite = false;
+              material.depthWrite = false;
+              material.opacity = 0;
+              material.transparent = true;
+              material.needsUpdate = true;
+              continue;
+            }
+            if (material.map) {
+              material.map.anisotropy = 8;
+              material.map.needsUpdate = true;
+            }
+            if (material.emissive) material.emissive.setRGB(0, 0, 0);
+            if ('emissiveIntensity' in material) material.emissiveIntensity = 0;
+            material.needsUpdate = true;
+          }
+        });
+
+        vrm.scene.updateMatrixWorld(true);
+        const bounds = new THREE.Box3().setFromObject(vrm.scene);
+        const size = new THREE.Vector3();
+        bounds.getSize(size);
+        vrm.scene.scale.setScalar((1.72 * 1.2) / Math.max(0.001, size.y));
+
+        const humanoid = vrm.humanoid;
+        humanoid.resetNormalizedPose();
+        const setBone = (name, x, y, z) => {
+          const node = humanoid.getNormalizedBoneNode(name);
+          if (node) node.quaternion.setFromEuler(new THREE.Euler(x, y, z, 'XYZ')).normalize();
+        };
+
+        // Riding pose: thighs forward, knees flexed, hands reaching the bars.
+        setBone('leftUpperLeg', -1.22, -0.05, -0.06);
+        setBone('rightUpperLeg', -1.02, 0.05, 0.06);
+        setBone('leftLowerLeg', 1.08, 0, 0);
+        setBone('rightLowerLeg', 0.92, 0, 0);
+        setBone('leftFoot', -0.08, 0, 0);
+        setBone('rightFoot', -0.08, 0, 0);
+        setBone('leftUpperArm', -0.058, -0.884, -0.134);
+        setBone('rightUpperArm', -0.058, 0.884, 0.134);
+        setBone('leftLowerArm', -0.324, -0.781, 0.105);
+        setBone('rightLowerArm', -0.324, 0.781, -0.105);
+        setBone('spine', 0.580, 0, 0);
+        setBone('chest', 0.242, 0, 0);
+        setBone('head', -0.20, 0, 0);
+
+        // Curl the fingers around the handlebar grips.
+        const fingerNames = [
+          ['ThumbMetacarpal', 0.25],
+          ['ThumbProximal', 0.5],
+          ['ThumbDistal', 0.4],
+          ['IndexProximal', 0.85],
+          ['IndexIntermediate', 1.05],
+          ['IndexDistal', 0.85],
+          ['MiddleProximal', 0.95],
+          ['MiddleIntermediate', 1.15],
+          ['MiddleDistal', 0.9],
+          ['RingProximal', 1.0],
+          ['RingIntermediate', 1.2],
+          ['RingDistal', 0.95],
+          ['LittleProximal', 1.05],
+          ['LittleIntermediate', 1.25],
+          ['LittleDistal', 1.0]
+        ];
+        const gripFingers = [];
+        for (const side of ['left', 'right']) {
+          for (const [suffix, curl] of fingerNames) {
+            const node = humanoid.getNormalizedBoneNode(`${side}${suffix}`);
+            if (node) gripFingers.push({ node, rest: node.quaternion.clone(), curl, side });
+          }
+        }
+        const curlAxis = new THREE.Vector3(0, 0, 1);
+        const curlQ = new THREE.Quaternion();
+        for (const finger of gripFingers) {
+          curlQ.setFromAxisAngle(curlAxis, (finger.side === 'right' ? 1 : -1) * finger.curl);
+          finger.node.quaternion.copy(finger.rest).multiply(curlQ).normalize();
+        }
+
+        const rider = new THREE.Group();
+        rider.add(vrm.scene);
+        yuriBikeRoot.add(rider);
+        vrm.update(0);
+        yuriBikeRoot.updateMatrixWorld(true);
+        const hips = humanoid.getNormalizedBoneNode('hips');
+        if (hips) {
+          const hipWorld = new THREE.Vector3();
+          hips.getWorldPosition(hipWorld);
+          const hipLocal = yuriBikeRoot.worldToLocal(hipWorld.clone());
+          rider.position.y += 1.196 - hipLocal.y;
+          rider.position.z += -0.051 - hipLocal.z;
+        }
+        yuriBikeRoot.scale.setScalar(1.5);
+        yuriBikeRoot.updateMatrixWorld(true);
+
+        const leftFoot = humanoid.getNormalizedBoneNode('leftFoot');
+        const rightFoot = humanoid.getNormalizedBoneNode('rightFoot');
+        if (leftFoot && rightFoot) {
+          crank.visible = false;
+          const pedalGeo = new THREE.BoxGeometry(0.18, 0.035, 0.1);
+          const pedalLeft = new THREE.Mesh(pedalGeo, bikeMetalMat);
+          const pedalRight = new THREE.Mesh(pedalGeo, bikeMetalMat);
+          pedalLeft.castShadow = true;
+          pedalRight.castShadow = true;
+          yuriBikeRoot.add(pedalLeft, pedalRight);
+
+          const crankGeo = new THREE.CylinderGeometry(0.018, 0.018, 1, 8);
+          const crankLeft = new THREE.Mesh(crankGeo, bikeChromeMat);
+          const crankRight = new THREE.Mesh(crankGeo, bikeChromeMat);
+          yuriBikeRoot.add(crankLeft, crankRight);
+
+          const headBone = humanoid.getNormalizedBoneNode('head');
+          const noseBlood = new THREE.Group();
+          noseBlood.name = 'YuriNoseBlood';
+          const bloodMat = new THREE.MeshBasicMaterial({
+            color: 0xc4121d,
+            side: THREE.DoubleSide,
+            depthWrite: false
+          });
+          const bloodPatch = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.22), bloodMat);
+          bloodPatch.position.set(0, -0.08, 0.205);
+          noseBlood.add(bloodPatch);
+          const bloodStreak = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.025, 0.038, 0.32, 8),
+            bloodMat
+          );
+          bloodStreak.position.set(0, -0.20, 0.22);
+          noseBlood.add(bloodStreak);
+          const dropGeo = new THREE.SphereGeometry(0.038, 10, 8);
+          const bloodDrop = new THREE.Mesh(dropGeo, bloodMat);
+          bloodDrop.position.set(0, -0.39, 0.22);
+          noseBlood.add(bloodDrop);
+          const bloodDrop2 = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 8), bloodMat);
+          bloodDrop2.position.set(0.055, -0.47, 0.22);
+          noseBlood.add(bloodDrop2);
+          const bloodDrop3 = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), bloodMat);
+          bloodDrop3.position.set(-0.035, -0.54, 0.21);
+          noseBlood.add(bloodDrop3);
+          const bloodLip = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.055), bloodMat);
+          bloodLip.position.set(0, -0.19, 0.21);
+          noseBlood.add(bloodLip);
+          noseBlood.visible = false;
+          if (headBone) headBone.add(noseBlood);
+
+          yuriRideRig = {
+            vrm,
+            humanoid,
+            rider,
+            root: yuriBikeRoot,
+            noseBlood,
+            leftUpper: humanoid.getNormalizedBoneNode('leftUpperLeg'),
+            leftLower: humanoid.getNormalizedBoneNode('leftLowerLeg'),
+            rightUpper: humanoid.getNormalizedBoneNode('rightUpperLeg'),
+            rightLower: humanoid.getNormalizedBoneNode('rightLowerLeg'),
+            leftUpperArm: humanoid.getNormalizedBoneNode('leftUpperArm'),
+            leftLowerArm: humanoid.getNormalizedBoneNode('leftLowerArm'),
+            rightUpperArm: humanoid.getNormalizedBoneNode('rightUpperArm'),
+            rightLowerArm: humanoid.getNormalizedBoneNode('rightLowerArm'),
+            leftHand: humanoid.getNormalizedBoneNode('leftHand'),
+            rightHand: humanoid.getNormalizedBoneNode('rightHand'),
+            leftFoot,
+            rightFoot,
+            pedalLeft,
+            pedalRight,
+            crankLeft,
+            crankRight,
+            bottomBracket: new THREE.Vector3(0, 0.46, 0)
+          };
+
+          yuriRideJourney = {
+            curve: new THREE.CatmullRomCurve3([
+              new THREE.Vector3(6.0, 0.18, -16.5),
+              new THREE.Vector3(6.0, 0.18, -7.0),
+              new THREE.Vector3(5.95, 0.18, -2.8),
+              new THREE.Vector3(5.35, 0.08, -1.8),
+              new THREE.Vector3(4.35, 0.0, -1.6),
+              new THREE.Vector3(2.2, 0.0, -1.6),
+              new THREE.Vector3(0.0, 0.0, -1.6)
+            ], false, 'catmullrom', 0.12),
+            elapsed: 0,
+            duration: 9.0,
+            finished: false
+          };
+          yuriBikeRoot.position.copy(yuriRideJourney.curve.getPointAt(0));
+          yuriBikeRoot.rotation.y = 0;
+        }
+
+        console.log('[Yuri] Riding bicycle at the zebra crossing.');
+      },
+      undefined,
+      (error) => console.warn('[Yuri] Failed to load yuri.vrm.', error)
+    );
+
+    // 共用材質庫
+    const brickRed = TextureFactory.createBrickTextures('red');
+    const brickOchre = TextureFactory.createBrickTextures('ochre');
+    const brickDark = TextureFactory.createBrickTextures('dark');
+
+    const brickMaterials = [
+      new THREE.MeshStandardMaterial({ map: brickRed.map, bumpMap: brickRed.bumpMap, bumpScale: 0.03, roughness: 0.78 }),
+      new THREE.MeshStandardMaterial({ map: brickOchre.map, bumpMap: brickOchre.bumpMap, bumpScale: 0.03, roughness: 0.8 }),
+      new THREE.MeshStandardMaterial({ map: brickDark.map, bumpMap: brickDark.bumpMap, bumpScale: 0.03, roughness: 0.76 })
+    ];
+
+    const plasterMat = new THREE.MeshStandardMaterial({ color: 0xd8d0c1, roughness: 0.65 });
+    const slateRoofMat = new THREE.MeshStandardMaterial({ color: 0x1e242d, roughness: 0.55, metalness: 0.15 });
+    const darkIronMat = new THREE.MeshStandardMaterial({ color: 0x14171a, roughness: 0.4, metalness: 0.75 });
+
+    const winLitWarm = new THREE.MeshStandardMaterial({
+      map: TextureFactory.createWindowTexture(true, '#ffae42'),
+      emissive: new THREE.Color(0xff9d2e),
+      emissiveMap: TextureFactory.createWindowTexture(true, '#ffae42'),
+      emissiveIntensity: 1.15,
+      roughness: 0.2
+    });
+    const winLitSoft = new THREE.MeshStandardMaterial({
+      map: TextureFactory.createWindowTexture(true, '#ffd27d'),
+      emissive: new THREE.Color(0xffbe55),
+      emissiveMap: TextureFactory.createWindowTexture(true, '#ffd27d'),
+      emissiveIntensity: 0.85,
+      roughness: 0.2
+    });
+    const winDark = new THREE.MeshStandardMaterial({
+      map: TextureFactory.createWindowTexture(false),
+      roughness: 0.15,
+      metalness: 0.4
+    });
+
+    const chimneyPositions = []; // 記錄煙囪頂部位置用於生成炊煙
+
+    // 5.3 維多利亞/喬治亞聯排建築生成器
+    function buildVictorianTownhouse(options) {
+      const {
+        x, z, side, width = 7.2, floors = 3, brickIndex = 0,
+        shopType = null // 'pub' | 'books' | 'tailor' | null
+      } = options;
+
+      const group = new THREE.Group();
+      group.position.set(x, 0.18, z);
+      // side = -1 (街道左側，朝向 +X)；side = 1 (街道右側，朝向 -X)
+      group.rotation.y = side === -1 ? Math.PI / 2 : -Math.PI / 2;
+
+      const depth = 8.5;
+      const groundH = 3.8;
+      const upperFloorH = 3.1;
+      const totalWallH = groundH + (floors - 1) * upperFloorH;
+
+      // 主建築量體
+      const bodyGeo = new THREE.BoxGeometry(width, totalWallH, depth);
+      const bodyMesh = new THREE.Mesh(bodyGeo, brickMaterials[brickIndex % brickMaterials.length]);
+      bodyMesh.position.set(0, totalWallH / 2, -depth / 2);
+      bodyMesh.castShadow = true;
+      bodyMesh.receiveShadow = true;
+      group.add(bodyMesh);
+
+      // 白色石膏腰線與屋頂簷口 (Cornice)
+      const cornice = new THREE.Mesh(new THREE.BoxGeometry(width + 0.25, 0.36, depth + 0.35), plasterMat);
+      cornice.position.set(0, totalWallH, -depth / 2 + 0.1);
+      group.add(cornice);
+
+      const beltCourse = new THREE.Mesh(new THREE.BoxGeometry(width + 0.12, 0.2, depth + 0.12), plasterMat);
+      beltCourse.position.set(0, groundH, -depth / 2 + 0.04);
+      group.add(beltCourse);
+
+      // 斜坡板岩屋頂 + 閣樓老虎窗 (Dormer Windows)
+      const roofH = 2.6;
+      const roofGeo = new THREE.ConeGeometry(width * 0.74, roofH, 4);
+      const roofMesh = new THREE.Mesh(roofGeo, slateRoofMat);
+      roofMesh.position.set(0, totalWallH + roofH / 2, -depth / 2);
+      roofMesh.rotation.y = Math.PI / 4;
+      roofMesh.scale.set(1, 1, depth / width);
+      group.add(roofMesh);
+
+      // 閣樓老虎窗
+      [-width * 0.24, width * 0.24].forEach(dx => {
+        const dormer = new THREE.Group();
+        dormer.position.set(dx, totalWallH + 0.95, -1.1);
+        const dBox = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.35, 1.5), plasterMat);
+        dormer.add(dBox);
+        const dWin = new THREE.Mesh(new THREE.PlaneGeometry(0.75, 0.95), Math.random() > 0.35 ? winLitSoft : winDark);
+        dWin.position.z = 0.76;
+        dormer.add(dWin);
+        const dRoof = new THREE.Mesh(new THREE.ConeGeometry(0.95, 0.7, 4), slateRoofMat);
+        dRoof.position.y = 0.95;
+        dRoof.rotation.y = Math.PI / 4;
+        dormer.add(dRoof);
+        group.add(dormer);
+      });
+
+      // 紅磚煙囪與陶土煙囪管 (Chimney Pots)
+      const chimX = (Math.random() > 0.5 ? 1 : -1) * (width * 0.32);
+      const chimGroup = new THREE.Group();
+      chimGroup.position.set(chimX, totalWallH + roofH * 0.65, -depth * 0.45);
+      const chimStack = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.2, 0.8), brickMaterials[brickIndex]);
+      chimGroup.add(chimStack);
+      [-0.25, 0.25].forEach(px => {
+        const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.65, 10), brickMaterials[0]);
+        pot.position.set(px, 1.35, 0);
+        chimGroup.add(pot);
+      });
+      group.add(chimGroup);
+
+      // 記錄世界座標煙囪頂部位置
+      const worldChimPos = new THREE.Vector3(chimX, totalWallH + roofH * 0.65 + 1.7, -depth * 0.45);
+      group.localToWorld(worldChimPos);
+      chimneyPositions.push(worldChimPos);
+
+      // 樓上喬治亞式排窗與白色石膏窗框
+      for (let f = 1; f < floors; f++) {
+        const wy = groundH + (f - 1) * upperFloorH + upperFloorH * 0.52;
+        const winCount = 3;
+        for (let i = 0; i < winCount; i++) {
+          const wx = (i - 1) * (width * 0.3);
+          const frame = new THREE.Mesh(new THREE.BoxGeometry(1.22, 1.85, 0.18), plasterMat);
+          frame.position.set(wx, wy, 0.04);
+          group.add(frame);
+
+          // 窗台石
+          const sill = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.14, 0.28), plasterMat);
+          sill.position.set(wx, wy - 0.95, 0.08);
+          group.add(sill);
+
+          const isLit = Math.random() > 0.32;
+          const paneMat = isLit ? (Math.random() > 0.45 ? winLitWarm : winLitSoft) : winDark;
+          const pane = new THREE.Mesh(new THREE.PlaneGeometry(0.98, 1.62), paneMat);
+          pane.position.set(wx, wy, 0.14);
+          group.add(pane);
+        }
+      }
+
+      // 地面層：特色英倫店鋪 或 經典凸窗 (Bay Window) 住宅
+      if (shopType === 'pub') {
+        // 經典英式酒館：The Crown & Anchor
+        const pubWoodMat = new THREE.MeshStandardMaterial({ color: 0x10291d, roughness: 0.35, metalness: 0.15 });
+        const facade = new THREE.Mesh(new THREE.BoxGeometry(width - 0.1, groundH - 0.1, 0.35), pubWoodMat);
+        facade.position.set(0, groundH / 2, 0.12);
+        group.add(facade);
+
+        // 兩側大面積暖光彩繪櫥窗
+        [-width * 0.27, width * 0.27].forEach(wx => {
+          const bay = new THREE.Mesh(new THREE.BoxGeometry(2.05, 2.2, 0.45), pubWoodMat);
+          bay.position.set(wx, 1.55, 0.26);
+          group.add(bay);
+
+          const glass = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.85), winLitWarm);
+          glass.position.set(wx, 1.58, 0.5);
+          group.add(glass);
+        });
+
+        // 中央雙開木門
+        const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(1.35, 2.55, 0.4), pubWoodMat);
+        doorFrame.position.set(0, 1.3, 0.22);
+        group.add(doorFrame);
+        const doorGlass = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 1.65), winLitWarm);
+        doorGlass.position.set(0, 1.55, 0.43);
+        group.add(doorGlass);
+
+        // 金字招牌橫匾
+        const signTex = TextureFactory.createSignTexture('THE CROWN & ANCHOR', 'FINE ALES · SPIRITS · EST. 1842', '#0d2318', '#f7c966', '#d89c36');
+        const signMat = new THREE.MeshStandardMaterial({
+          map: signTex,
+          emissive: new THREE.Color(0xffb44c),
+          emissiveMap: signTex,
+          emissiveIntensity: 0.55,
+          roughness: 0.3
+        });
+        const signBoard = new THREE.Mesh(new THREE.BoxGeometry(width - 0.3, 0.88, 0.22), signMat);
+        signBoard.position.set(0, groundH - 0.45, 0.32);
+        group.add(signBoard);
+
+        // 懸掛式復古鐵藝酒館招牌
+        const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 1.45), darkIronMat);
+        bracket.position.set(width * 0.42, groundH + 0.35, 0.72);
+        group.add(bracket);
+
+        const hangTex = TextureFactory.createHangingSignTexture();
+        const hangMat = new THREE.MeshStandardMaterial({
+          map: hangTex,
+          emissive: new THREE.Color(0xffaa3b),
+          emissiveMap: hangTex,
+          emissiveIntensity: 0.48,
+          roughness: 0.35
+        });
+        const hangSign = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.05, 0.95), hangMat);
+        hangSign.position.set(width * 0.42, groundH - 0.28, 1.05);
+        hangSign.userData.isHangingSign = true;
+        group.add(hangSign);
+
+        // 酒館門口橡木酒桶 (Oak Barrels)
+        [-width * 0.42, width * 0.42].forEach(bx => {
+          const barrel = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.32, 0.34, 0.85, 14),
+            new THREE.MeshStandardMaterial({ color: 0x4a2c18, roughness: 0.7 })
+          );
+          barrel.position.set(bx, 0.425, 0.65);
+          barrel.castShadow = true;
+          group.add(barrel);
+        });
+
+        // 酒館暖光點光源
+        const pubLight = new THREE.PointLight(0xff9c38, 6.5, 11, 1.6);
+        pubLight.position.set(0, 2.3, 1.4);
+        group.add(pubLight);
+
+      } else if (shopType === 'books' || shopType === 'tailor') {
+        // 復古書店 / 薩維爾街裁縫店
+        const isBooks = shopType === 'books';
+        const shopColor = isBooks ? 0x4a161c : 0x162238;
+        const shopWood = new THREE.MeshStandardMaterial({ color: shopColor, roughness: 0.4 });
+
+        const facade = new THREE.Mesh(new THREE.BoxGeometry(width - 0.1, groundH - 0.1, 0.32), shopWood);
+        facade.position.set(0, groundH / 2, 0.1);
+        group.add(facade);
+
+        // 櫥窗與暖光
+        [-width * 0.22, width * 0.25].forEach((wx, idx) => {
+          const wWidth = idx === 0 ? 2.5 : 1.7;
+          const glass = new THREE.Mesh(new THREE.PlaneGeometry(wWidth, 2.05), winLitSoft);
+          glass.position.set(wx, 1.45, 0.28);
+          group.add(glass);
+        });
+
+        // 店鋪橫匾
+        const sTitle = isBooks ? 'CHELSEA RARE BOOKS' : 'SAVILE & SONS TAILORS';
+        const sSub = isBooks ? 'ANTIQUARIAN · FIRST EDITIONS' : 'BESPOKE GENTLEMEN OUTFITTERS';
+        const sTex = TextureFactory.createSignTexture(sTitle, sSub, isBooks ? '#3d1015' : '#101b2e', '#f4d078', '#c99b42');
+        const sMat = new THREE.MeshStandardMaterial({
+          map: sTex,
+          emissive: new THREE.Color(0xffb85c),
+          emissiveMap: sTex,
+          emissiveIntensity: 0.42
+        });
+        const sBoard = new THREE.Mesh(new THREE.BoxGeometry(width - 0.3, 0.78, 0.2), sMat);
+        sBoard.position.set(0, groundH - 0.42, 0.3);
+        group.add(sBoard);
+
+        // 條紋布質遮陽篷 (Striped Awning)
+        const awningTex = TextureFactory.createAwningTexture(isBooks ? '#6e1922' : '#1b2e4b', '#e6dcc8');
+        const awningMat = new THREE.MeshStandardMaterial({ map: awningTex, roughness: 0.75, side: THREE.DoubleSide });
+        const awning = new THREE.Mesh(new THREE.BoxGeometry(width - 0.4, 0.06, 1.45), awningMat);
+        awning.position.set(0, groundH - 0.95, 0.85);
+        awning.rotation.x = 0.34;
+        awning.castShadow = true;
+        group.add(awning);
+
+        const shopLight = new THREE.PointLight(0xffb454, 4.2, 9.5, 1.7);
+        shopLight.position.set(0, 2.1, 1.3);
+        group.add(shopLight);
+
+      } else {
+        // 維多利亞住宅：凸窗 (Bay Window) + 鍛鐵欄杆 + 台階大門
+        const bayMat = plasterMat;
+        const bayBox = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.75, 0.85), bayMat);
+        bayBox.position.set(-width * 0.2, 1.45, 0.42);
+        bayBox.castShadow = true;
+        group.add(bayBox);
+
+        const bayWin = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 1.95), Math.random() > 0.3 ? winLitSoft : winDark);
+        bayWin.position.set(-width * 0.2, 1.55, 0.86);
+        group.add(bayWin);
+
+        // 住宅入口大門與門廊
+        const doorX = width * 0.25;
+        const doorColor = [0x143326, 0x5c191e, 0x18263b, 0x1a1a1a][Math.floor(Math.random() * 4)];
+        const doorMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(1.15, 2.35, 0.15),
+          new THREE.MeshStandardMaterial({ color: doorColor, roughness: 0.35 })
+        );
+        doorMesh.position.set(doorX, 1.25, 0.08);
+        group.add(doorMesh);
+
+        // 門楣半圓扇形亮窗 (Fanlight)
+        const fanlight = new THREE.Mesh(new THREE.CircleGeometry(0.55, 16, 0, Math.PI), winLitWarm);
+        fanlight.position.set(doorX, 2.48, 0.12);
+        group.add(fanlight);
+
+        // 鍛鐵前院欄杆 (Wrought Iron Railings)
+        const railGroup = new THREE.Group();
+        railGroup.position.set(0, 0, 1.05);
+        const topRail = new THREE.Mesh(new THREE.BoxGeometry(width - 0.2, 0.05, 0.05), darkIronMat);
+        topRail.position.y = 0.95;
+        railGroup.add(topRail);
+        const barCount = 16;
+        for (let b = 0; b <= barCount; b++) {
+          const bx = -width / 2 + 0.15 + (b / barCount) * (width - 0.3);
+          if (Math.abs(bx - doorX) < 0.75) continue; // 留出門口通道
+          const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.98, 6), darkIronMat);
+          bar.position.set(bx, 0.49, 0);
+          railGroup.add(bar);
+        }
+        group.add(railGroup);
+      }
+
+      scene.add(group);
+      return group;
+    }
+
+    // 沿街道兩側排列建築群
+    const leftBuildingsBase = [
+      { z: 22, width: 7.4, floors: 3, brickIndex: 1, shopType: null },
+      { z: 14.4, width: 7.6, floors: 3, brickIndex: 0, shopType: 'books' },
+      { z: 6.6, width: 7.8, floors: 4, brickIndex: 2, shopType: null },
+      { z: -1.4, width: 8.2, floors: 3, brickIndex: 0, shopType: 'pub' },   // 視覺焦點：皇冠與船錨酒館
+      { z: -9.6, width: 7.6, floors: 3, brickIndex: 1, shopType: null },
+      { z: -17.4, width: 7.8, floors: 4, brickIndex: 0, shopType: 'tailor' },
+      { z: -25.4, width: 7.6, floors: 3, brickIndex: 2, shopType: null },
+      { z: -33.2, width: 7.8, floors: 3, brickIndex: 1, shopType: null }
+    ];
+    const leftBuildings = [
+      ...leftBuildingsBase,
+      ...leftBuildingsBase.map((cfg) => ({ ...cfg, z: cfg.z - 64 }))
+    ];
+
+    const rightBuildingsBase = [
+      { z: 21, width: 7.6, floors: 3, brickIndex: 0, shopType: null },
+      { z: 13.2, width: 7.8, floors: 4, brickIndex: 2, shopType: 'tailor' },
+      { z: 5.2, width: 7.6, floors: 3, brickIndex: 1, shopType: null },
+      { z: -2.6, width: 7.8, floors: 3, brickIndex: 0, shopType: null },
+      { z: -10.6, width: 8.0, floors: 4, brickIndex: 2, shopType: 'books' },
+      { z: -18.8, width: 7.6, floors: 3, brickIndex: 1, shopType: null },
+      { z: -26.6, width: 7.8, floors: 3, brickIndex: 0, shopType: null },
+      { z: -34.4, width: 7.6, floors: 4, brickIndex: 2, shopType: null }
+    ];
+    const rightBuildings = [
+      ...rightBuildingsBase,
+      ...rightBuildingsBase.map((cfg) => ({ ...cfg, z: cfg.z - 64 }))
+    ];
+
+    const buildingGroups = [];
+    leftBuildings.forEach(cfg => {
+      buildingGroups.push(buildVictorianTownhouse({
+        ...cfg,
+        x: -(roadWidth / 2 + sidewalkWidth),
+        side: -1
+      }));
+    });
+    rightBuildings.forEach(cfg => {
+      buildingGroups.push(buildVictorianTownhouse({
+        ...cfg,
+        x: roadWidth / 2 + sidewalkWidth,
+        side: 1
+      }));
+    });
+
+    // ============================================================================
+    // 6. 標誌性英倫街頭道具 (電話亭、皇家郵筒、維多利亞路燈、老爺計程車、遠景橋樑)
+    // ============================================================================
+    const streetLampLights = [];
+    const lampHaloSprites = [];
+    const softGlowTex = TextureFactory.createSoftParticleTexture();
+
+    // 6.1 維多利亞鑄鐵路燈 (Victorian Street Lamp)
+    const lampMetalMat = new THREE.MeshPhysicalMaterial({
+      color: 0x060708,
+      roughness: 0.16,
+      metalness: 0.92,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.08
+    });
+    function createVictorianLamp(x, z) {
+      const lamp = new THREE.Group();
+      lamp.position.set(x, 0.18, z);
+
+      // 鑄鐵底座與燈柱
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.24, 0.9, 10), lampMetalMat);
+      base.position.y = 0.45;
+      base.castShadow = true;
+      lamp.add(base);
+
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.11, 3.1, 10), lampMetalMat);
+      pole.position.y = 2.45;
+      pole.castShadow = true;
+      lamp.add(pole);
+
+      // 橫向掛桿
+      const crossBar = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.65, 8), lampMetalMat);
+      crossBar.rotation.z = Math.PI / 2;
+      crossBar.position.y = 3.85;
+      lamp.add(crossBar);
+
+      // 六角形玻璃燈籠
+      const lanternGlassMat = new THREE.MeshStandardMaterial({
+        color: 0xffe4a3,
+        emissive: new THREE.Color(0xffa630),
+        emissiveIntensity: 2.8,
+        roughness: 0.1
+      });
+      const lantern = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.16, 0.52, 6), lanternGlassMat);
+      lantern.position.y = 4.22;
+      lamp.add(lantern);
+
+      // 燈籠頂蓋與尖頂
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.29, 0.26, 6), lampMetalMat);
+      cap.position.y = 4.6;
+      lamp.add(cap);
+
+      // 琥珀色暖光點光源
+      const ptLight = new THREE.PointLight(0xffa436, 11.5, 16, 1.55);
+      ptLight.position.set(0, 4.2, 0);
+      lamp.add(ptLight);
+      streetLampLights.push(ptLight);
+
+      // 空氣微霧體積光暈精靈 (Volumetric Halo Sprite)
+      const haloMat = new THREE.SpriteMaterial({
+        map: softGlowTex,
+        color: 0xffa838,
+        transparent: true,
+        opacity: 0.42,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      const halo = new THREE.Sprite(haloMat);
+      halo.position.set(0, 4.22, 0);
+      halo.scale.set(3.4, 3.4, 1);
+      lamp.add(halo);
+      lampHaloSprites.push(halo);
+
+      scene.add(lamp);
+    }
+
+    // 交錯設置路燈
+    const lampCoordsBase = [
+      [-5.1, 16], [5.1, 10],
+      [-5.1, 2.8], [5.1, -4.5],
+      [-5.1, -11.5], [5.1, -18.5],
+      [-5.1, -25.5], [5.1, -32.5]
+    ];
+    const lampCoords = [
+      ...lampCoordsBase,
+      ...lampCoordsBase.map(([x, z]) => [x, z - 64])
+    ];
+    lampCoords.forEach(([lx, lz]) => createVictorianLamp(lx, lz));
+
+    // 6.2 經典紅色電話亭 (K6 Red Telephone Box)
+    function createRedPhoneBox(x, z, rotY = 0) {
+      const box = new THREE.Group();
+      box.position.set(x, 0.18, z);
+      box.rotation.y = rotY;
+
+      const k6RedMat = new THREE.MeshStandardMaterial({
+        color: 0xb81414,
+        roughness: 0.28,
+        metalness: 0.25
+      });
+
+      // 底座
+      const plinth = new THREE.Mesh(new THREE.BoxGeometry(1.06, 0.18, 1.06), darkIronMat);
+      plinth.position.y = 0.09;
+      box.add(plinth);
+
+      // 主亭身框架
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.96, 2.25, 0.96), k6RedMat);
+      body.position.y = 1.3;
+      body.castShadow = true;
+      box.add(body);
+
+      // 三面玻璃窗格（內部暖光透出）
+      const phoneGlassMat = new THREE.MeshStandardMaterial({
+        color: 0xffe6b3,
+        emissive: new THREE.Color(0xffa940),
+        emissiveIntensity: 1.45,
+        roughness: 0.15
+      });
+      [0, Math.PI / 2, -Math.PI / 2].forEach(ang => {
+        const winHolder = new THREE.Group();
+        winHolder.position.y = 1.38;
+        winHolder.rotation.y = ang;
+        const pane = new THREE.Mesh(new THREE.PlaneGeometry(0.68, 1.65), phoneGlassMat);
+        pane.position.z = 0.485;
+        winHolder.add(pane);
+        box.add(winHolder);
+      });
+
+      // 圓拱頂蓋 (Domed Roof) 與皇冠徽飾
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(0.54, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+        k6RedMat
+      );
+      dome.position.y = 2.4;
+      dome.scale.set(1, 0.55, 1);
+      box.add(dome);
+
+      // 頂部發光 "TELEPHONE" 橫條
+      const topSignMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: new THREE.Color(0xfff0d4),
+        emissiveIntensity: 1.8
+      });
+      const topSign = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.14, 0.99), topSignMat);
+      topSign.position.y = 2.34;
+      box.add(topSign);
+
+      // 電話亭內部點光源
+      const innerLight = new THREE.PointLight(0xffaa44, 3.8, 6.5, 1.7);
+      innerLight.position.set(0, 1.7, 0);
+      box.add(innerLight);
+
+      scene.add(box);
+      return box;
+    }
+
+    // 放置兩座標誌性紅色電話亭
+    // Red telephone booths replaced by the supplied GLB.
+    new GLTFLoader().load('./phonebooth.glb', (gltf) => {
+      const source = gltf.scene;
+      source.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(source);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      bounds.getSize(size);
+      bounds.getCenter(center);
+      const scale = 4.8 / Math.max(0.001, size.y);
+      source.scale.setScalar(scale);
+      source.position.set(
+        -center.x * scale,
+        -bounds.min.y * scale + 0.18,
+        -center.z * scale
+      );
+      const normalized = new THREE.Group();
+      normalized.add(source);
+
+      const addBoothLight = (root) => {
+        const light = new THREE.PointLight(0xffc46b, 7.0, 6.0, 1.6);
+        light.position.set(0, 2.35, 0);
+        root.add(light);
+        const bulb = new THREE.Mesh(
+          new THREE.SphereGeometry(0.075, 12, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffe0a0 })
+        );
+        bulb.position.set(0, 2.35, 0);
+        root.add(bulb);
+      };
+
+      const right = normalized.clone(true);
+      right.position.set(5.65, 0, 8.2);
+      right.rotation.y = -Math.PI / 2;
+      addBoothLight(right);
+      scene.add(right);
+      const left = normalized.clone(true);
+      left.position.set(-5.65, 0, -14.5);
+      left.rotation.y = Math.PI / 2;
+      addBoothLight(left);
+      scene.add(left);
+
+      console.log('[PhoneBooth] GLB loaded at both sidewalk positions.');
+    }, undefined, (error) => console.warn('[PhoneBooth] Failed to load phonebooth.glb.', error));
+
+    // 6.3 紅色皇家郵筒 (Royal Mail Pillar Box)
+    function createPillarBox(x, z) {
+      const pillar = new THREE.Group();
+      pillar.position.set(x, 0.18, z);
+
+      const postRed = new THREE.MeshStandardMaterial({ color: 0xb01212, roughness: 0.32, metalness: 0.2 });
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, 0.25, 16), darkIronMat);
+      base.position.y = 0.125;
+      pillar.add(base);
+
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 1.15, 16), postRed);
+      shaft.position.y = 0.82;
+      shaft.castShadow = true;
+      pillar.add(shaft);
+
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.27, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), postRed);
+      cap.position.y = 1.38;
+      cap.scale.y = 0.55;
+      pillar.add(cap);
+
+      // 投信口
+      const slot = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 0.06), darkIronMat);
+      slot.position.set(0, 1.15, 0.24);
+      pillar.add(slot);
+
+      scene.add(pillar);
+    }
+    createPillarBox(-5.25, 5.2);
+
+    // 6.4 牆面路牌 (BAKER STREET W1)
+    const streetSignTex = TextureFactory.createStreetSignTexture();
+    const streetSignMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.06, 0.45, 1.15),
+      new THREE.MeshStandardMaterial({ map: streetSignTex, roughness: 0.3 })
+    );
+    streetSignMesh.position.set(-7.92, 3.35, 2.5);
+    scene.add(streetSignMesh);
+
+    // 6.5 經典復古英倫黑色計程車 (Austin FX4 Black Cab)
+    function createVintageBlackCab(x, z, rotY = 0) {
+      const cab = new THREE.Group();
+      cab.position.set(x, 0, z);
+      cab.rotation.y = rotY;
+
+      const bodyPaint = new THREE.MeshStandardMaterial({
+        color: 0x0e1116,
+        roughness: 0.18,
+        metalness: 0.65
+      });
+      const chromeMat = new THREE.MeshStandardMaterial({
+        color: 0xd8dee6,
+        roughness: 0.15,
+        metalness: 0.9
+      });
+      const cabGlassMat = new THREE.MeshStandardMaterial({
+        color: 0x182230,
+        roughness: 0.1,
+        metalness: 0.8
+      });
+
+      // 車身下盤
+      const lowerBody = new THREE.Mesh(new THREE.BoxGeometry(1.78, 0.68, 4.15), bodyPaint);
+      lowerBody.position.y = 0.62;
+      lowerBody.castShadow = true;
+      cab.add(lowerBody);
+
+      // 復古圓潤車廂頂部
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.64, 0.66, 2.55), bodyPaint);
+      cabin.position.set(0, 1.24, -0.22);
+      cabin.castShadow = true;
+      cab.add(cabin);
+
+      // 車窗
+      const sideWin = new THREE.Mesh(new THREE.BoxGeometry(1.67, 0.48, 2.2), cabGlassMat);
+      sideWin.position.set(0, 1.24, -0.22);
+      cab.add(sideWin);
+
+      // 經典黃色 "TAXI" 頂燈
+      const taxiSignMat = new THREE.MeshStandardMaterial({
+        color: 0xffc845,
+        emissive: new THREE.Color(0xff9d1c),
+        emissiveIntensity: 2.2
+      });
+      const taxiSign = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.16, 0.18), taxiSignMat);
+      taxiSign.position.set(0, 1.64, 0.82);
+      cab.add(taxiSign);
+
+      // 鍍鉻水箱護罩與前後保險桿
+      const grille = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.48, 0.08), chromeMat);
+      grille.position.set(0, 0.62, 2.08);
+      cab.add(grille);
+
+      const frontBumper = new THREE.Mesh(new THREE.BoxGeometry(1.86, 0.12, 0.14), chromeMat);
+      frontBumper.position.set(0, 0.34, 2.12);
+      cab.add(frontBumper);
+
+      const rearBumper = new THREE.Mesh(new THREE.BoxGeometry(1.86, 0.12, 0.14), chromeMat);
+      rearBumper.position.set(0, 0.34, -2.12);
+      cab.add(rearBumper);
+
+      // 暖白車頭燈 + 聚光燈光束
+      const headLightMat = new THREE.MeshStandardMaterial({
+        color: 0xfff3d6,
+        emissive: new THREE.Color(0xffe19c),
+        emissiveIntensity: 3.2
+      });
+      [-0.64, 0.64].forEach(hx => {
+        const hl = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 14), headLightMat);
+        hl.rotation.x = Math.PI / 2;
+        hl.position.set(hx, 0.68, 2.08);
+        cab.add(hl);
+      });
+
+      const headSpot = new THREE.SpotLight(0xffe4a8, 14, 24, Math.PI * 0.18, 0.55, 1.4);
+      headSpot.position.set(0, 0.72, 2.1);
+      headSpot.target.position.set(0, 0.1, 14);
+      cab.add(headSpot);
+      cab.add(headSpot.target);
+
+      // 紅色尾燈
+      const tailLightMat = new THREE.MeshStandardMaterial({
+        color: 0xff2a2a,
+        emissive: new THREE.Color(0xff1e1e),
+        emissiveIntensity: 2.6
+      });
+      [-0.68, 0.68].forEach(tx => {
+        const tl = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.22, 0.06), tailLightMat);
+        tl.position.set(tx, 0.65, -2.08);
+        cab.add(tl);
+      });
+
+      // 四個車輪與白邊復古胎壁
+      const tireMat = new THREE.MeshStandardMaterial({ color: 0x121316, roughness: 0.75 });
+      const wheelCoords = [
+        [-0.86, 0.34, 1.32], [0.86, 0.34, 1.32],
+        [-0.86, 0.34, -1.32], [0.86, 0.34, -1.32]
+      ];
+      wheelCoords.forEach(([wx, wy, wz]) => {
+        const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.22, 18), tireMat);
+        tire.rotation.z = Math.PI / 2;
+        tire.position.set(wx, wy, wz);
+        cab.add(tire);
+
+        const hubcap = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.24, 14), chromeMat);
+        hubcap.rotation.z = Math.PI / 2;
+        hubcap.position.set(wx, wy, wz);
+        cab.add(hubcap);
+      });
+
+      scene.add(cab);
+      return cab;
+    }
+
+    // 停靠在路邊的黑色汽車 GLB
+    const blackCarRoot = new THREE.Group();
+    blackCarRoot.position.set(-3.1, 0.0, -28.0);
+    blackCarRoot.rotation.y = Math.PI / 2;
+    scene.add(blackCarRoot);
+    new GLTFLoader().load('./black car.glb', (gltf) => {
+      const car = gltf.scene;
+      car.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(car);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      bounds.getSize(size);
+      bounds.getCenter(center);
+      const scale = 7.2 / Math.max(0.001, size.x);
+      car.scale.setScalar(scale);
+      car.position.set(
+        -center.x * scale,
+        -bounds.min.y * scale + 0.02,
+        -center.z * scale
+      );
+      car.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      blackCarRoot.add(car);
+      console.log('[BlackCar] GLB loaded.');
+    }, undefined, (error) => console.warn('[BlackCar] Failed to load black car.glb.', error));
+
+    // 6.6 紅色汽車 GLB（沿街道盡頭緩慢駛過）
+    const distantBus = new THREE.Group();
+    distantBus.position.set(1.6, 0, -44);
+    let redCarDetour = null;
+    let redCarFinished = false;
+    scene.add(distantBus);
+
+    const redCarLoader = new GLTFLoader();
+    redCarLoader.load(
+      './red car.glb',
+      (gltf) => {
+        const car = gltf.scene;
+        car.updateMatrixWorld(true);
+        const bounds = new THREE.Box3().setFromObject(car);
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        bounds.getSize(size);
+        bounds.getCenter(center);
+        const scale = 7.2 / Math.max(0.001, size.z);
+        car.scale.setScalar(scale);
+        car.position.set(
+          -center.x * scale,
+          -bounds.min.y * scale + 0.08,
+          -center.z * scale
+        );
+        car.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+        distantBus.add(car);
+
+        // Match the classic black cab's headlight treatment: two warm
+        // emissive lenses plus one forward SpotLight (no cone or glow volume).
+        const headlightMat = new THREE.MeshStandardMaterial({
+          color: 0xfff3d6,
+          emissive: new THREE.Color(0xffe19c),
+          emissiveIntensity: 3.2,
+          roughness: 0.22
+        });
+        [-0.72, 0.72].forEach((hx) => {
+          const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.08, 14), headlightMat);
+          lens.rotation.x = Math.PI / 2;
+          lens.position.set(hx, 1.56, 3.26);
+          lens.castShadow = false;
+          distantBus.add(lens);
+        });
+
+        const headSpot = new THREE.SpotLight(0xffe4a8, 14, 24, Math.PI * 0.18, 0.55, 1.4);
+        headSpot.position.set(0, 1.56, 3.24);
+        headSpot.target.position.set(0, 0.35, 14);
+        distantBus.add(headSpot);
+        distantBus.add(headSpot.target);
+
+        // Small red tail lamps make the car's direction readable.
+        const tailMat = new THREE.MeshStandardMaterial({
+          color: 0xff2a2a,
+          emissive: new THREE.Color(0xff1e1e),
+          emissiveIntensity: 2.8,
+          roughness: 0.3
+        });
+        [-0.72, 0.72].forEach((tx) => {
+          const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 14), tailMat);
+          tail.rotation.x = Math.PI / 2;
+          tail.position.set(tx, 1.3, -3.35);
+          distantBus.add(tail);
+        });
+
+        console.log('[RedCar] GLB loaded with headlights.');
+      },
+      undefined,
+      (error) => console.warn('[RedCar] Failed to load red car.glb.', error)
+    );
+
+    // ============================================================================
+    // 7. 動態環境粒子：細雨飄落系統 & 煙囪嫋嫋炊煙
+    // ============================================================================
+    // 7.1 細雨粒子 (Rain Streaks)
+    const rainCount = 3200;
+    const rainGeo = new THREE.BufferGeometry();
+    const rainPositions = new Float32Array(rainCount * 6); // 每滴雨為一條細線段 (2個頂點)
+    const rainVelocities = new Float32Array(rainCount);
+
+    for (let i = 0; i < rainCount; i++) {
+      const rx = (Math.random() - 0.5) * 34;
+      const ry = Math.random() * 28;
+      const rz = (Math.random() - 0.5) * 85 - 5;
+      const len = 0.42 + Math.random() * 0.35;
+
+      rainPositions[i * 6] = rx;
+      rainPositions[i * 6 + 1] = ry;
+      rainPositions[i * 6 + 2] = rz;
+
+      rainPositions[i * 6 + 3] = rx - 0.04; // 微微傾斜的風向
+      rainPositions[i * 6 + 4] = ry - len;
+      rainPositions[i * 6 + 5] = rz;
+
+      rainVelocities[i] = 18 + Math.random() * 10;
+    }
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+
+    const rainMat = new THREE.LineBasicMaterial({
+      color: 0xa8c2e0,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false
+    });
+    const rainSystem = new THREE.LineSegments(rainGeo, rainMat);
+    scene.add(rainSystem);
+
+    // 7.2 煙囪嫋嫋炊煙粒子 (Chimney Smoke)
+    const smokeParticles = [];
+    const smokeMat = new THREE.SpriteMaterial({
+      map: softGlowTex,
+      color: 0x8d99ae,
+      transparent: true,
+      opacity: 0.16,
+      depthWrite: false
+    });
+
+    // 挑選 6 座煙囪釋放炊煙
+    const activeChimneys = chimneyPositions.filter((_, idx) => idx % 2 === 0).slice(0, 6);
+    activeChimneys.forEach(origin => {
+      for (let i = 0; i < 8; i++) {
+        const sp = new THREE.Sprite(smokeMat.clone());
+        sp.position.copy(origin);
+        sp.position.y += i * 0.75;
+        sp.scale.setScalar(0.8 + i * 0.35);
+        sp.userData = {
+          origin: origin.clone(),
+          progress: i / 8,
+          speed: 0.14 + Math.random() * 0.06,
+          driftX: (Math.random() - 0.5) * 0.4
+        };
+        scene.add(sp);
+        smokeParticles.push(sp);
+      }
+    });
+
+    // ============================================================================
+    // 8. 時段氛圍預設系統 (Rainy Night / Golden Dusk / Misty Dawn)
+    // ============================================================================
+    const MOOD_PRESETS = {
+      rainyNight: {
+        bg: 0x080c14,
+        sky: 0x0b1220,
+        fogColor: 0x0c1320,
+        fogDensity: 0.0175,
+        hemiSky: 0x3b5582,
+        hemiGround: 0x1c1612,
+        hemiIntensity: 0.72,
+        dirColor: 0x6b8ec7,
+        dirIntensity: 1.3,
+        dirPos: [-18, 32, 16],
+        lampIntensity: 12.0,
+        haloOpacity: 0.44,
+        bloomStrength: 0.74,
+        exposure: 1.14
+      },
+      goldenDusk: {
+        bg: 0x1e1318,
+        sky: 0x3a1d24,
+        fogColor: 0x2b1920,
+        fogDensity: 0.0145,
+        hemiSky: 0xd97b54,
+        hemiGround: 0x241816,
+        hemiIntensity: 1.05,
+        dirColor: 0xff944d,
+        dirIntensity: 2.35,
+        dirPos: [-24, 14, -28],
+        lampIntensity: 8.5,
+        haloOpacity: 0.32,
+        bloomStrength: 0.62,
+        exposure: 1.18
+      },
+      mistyDawn: {
+        bg: 0x1a232e,
+        sky: 0x2a3847,
+        fogColor: 0x253240,
+        fogDensity: 0.023,
+        hemiSky: 0x8da6c2,
+        hemiGround: 0x262629,
+        hemiIntensity: 1.15,
+        dirColor: 0xc2d6eb,
+        dirIntensity: 1.55,
+        dirPos: [20, 22, -20],
+        lampIntensity: 6.0,
+        haloOpacity: 0.28,
+        bloomStrength: 0.52,
+        exposure: 1.08
+      }
+    };
+
+    function applyMood(moodKey) {
+      const m = MOOD_PRESETS[moodKey];
+      if (!m) return;
+
+      scene.background.setHex(m.bg);
+      skyDomeMat.color.setHex(m.sky);
+      scene.fog.color.setHex(m.fogColor);
+      scene.fog.density = m.fogDensity;
+
+      hemiLight.color.setHex(m.hemiSky);
+      hemiLight.groundColor.setHex(m.hemiGround);
+      hemiLight.intensity = m.hemiIntensity;
+
+      dirLight.color.setHex(m.dirColor);
+      dirLight.intensity = m.dirIntensity;
+      dirLight.position.set(...m.dirPos);
+
+      streetLampLights.forEach(l => l.intensity = m.lampIntensity);
+      lampHaloSprites.forEach(s => s.material.opacity = m.haloOpacity);
+      bloomPass.strength = m.bloomStrength;
+      renderer.toneMappingExposure = m.exposure;
+    }
+
+    const rainEnabled = true;
+
+    // 視窗大小自適應
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ============================================================================
+    // 11. 主動畫循環與載入過場
+    // ============================================================================
+    const clock = new THREE.Clock();
+
+    function setRideBone(humanoid, name, x, y, z) {
+      const node = humanoid.getNormalizedBoneNode(name);
+      if (node) node.quaternion.setFromEuler(new THREE.Euler(x, y, z, 'XYZ')).normalize();
+    }
+
+    const _ccdDelta = new THREE.Quaternion();
+    const _ccdFrom = new THREE.Vector3();
+    const _ccdTo = new THREE.Vector3();
+    const _ccdPivot = new THREE.Vector3();
+    const _ccdEnd = new THREE.Vector3();
+    const _ccdParent = new THREE.Quaternion();
+    const _ccdWorld = new THREE.Quaternion();
+
+    function rotateBoneToward(bone, endBone, targetWorld, root) {
+      bone.getWorldPosition(_ccdPivot);
+      endBone.getWorldPosition(_ccdEnd);
+      _ccdFrom.subVectors(_ccdEnd, _ccdPivot);
+      _ccdTo.subVectors(targetWorld, _ccdPivot);
+      if (_ccdFrom.lengthSq() < 1e-6 || _ccdTo.lengthSq() < 1e-6) return;
+      _ccdDelta.setFromUnitVectors(_ccdFrom.normalize(), _ccdTo.normalize());
+      bone.getWorldQuaternion(_ccdWorld);
+      bone.parent.getWorldQuaternion(_ccdParent);
+      _ccdWorld.premultiply(_ccdDelta);
+      bone.quaternion.copy(_ccdParent.invert().multiply(_ccdWorld)).normalize();
+      root.updateMatrixWorld(true);
+    }
+
+    function solveLegIK(rig, upper, lower, foot, targetWorld) {
+      // A few CCD passes are enough because the target moves only a little
+      // each frame and the legs start from a natural seated pose.
+      for (let i = 0; i < 4; i++) {
+        if (lower) rotateBoneToward(lower, foot, targetWorld, rig.root);
+        if (upper) rotateBoneToward(upper, foot, targetWorld, rig.root);
+      }
+    }
+
+    function getPalmWorld(humanoid, side) {
+      const hand = humanoid.getNormalizedBoneNode(`${side}Hand`);
+      const index = humanoid.getNormalizedBoneNode(`${side}IndexProximal`);
+      if (!hand) return null;
+      const handPos = new THREE.Vector3();
+      hand.getWorldPosition(handPos);
+      if (!index) return handPos;
+      const indexPos = new THREE.Vector3();
+      index.getWorldPosition(indexPos);
+      return handPos.lerp(indexPos, 0.55);
+    }
+
+    function solveArmIK(rig, upper, lower, hand, targetWorld) {
+      for (let i = 0; i < 4; i++) {
+        if (lower) rotateBoneToward(lower, hand, targetWorld, rig.root);
+        if (upper) rotateBoneToward(upper, hand, targetWorld, rig.root);
+      }
+    }
+
+    function applyYuriFall(dt) {
+      const rig = yuriRideRig;
+      yuriFallState.elapsed += dt;
+      const t = Math.min(1, yuriFallState.elapsed / yuriFallState.duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+
+      // The bicycle rolls sideways and drops to the road.
+      rig.root.position.y = THREE.MathUtils.lerp(yuriFallState.startY, 0.02, eased);
+      const fallQ = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 0, 1),
+        yuriFallState.direction * 1.46 * eased
+      );
+      rig.root.quaternion.copy(yuriFallState.startQuat).multiply(fallQ);
+      rig.root.updateMatrixWorld(true);
+
+      // Yuri is thrown free of the bike. Animate his world-space position
+      // and rotation independently, then clamp his lowest point onto the road.
+      const start = yuriFallState.startRiderWorld;
+      rig.rider.position.x = start.x - yuriFallState.direction * 1.15 * eased;
+      rig.rider.position.z = start.z + 0.75 * eased;
+      rig.rider.position.y = start.y + Math.sin(eased * Math.PI) * 0.22;
+      const riderFallQ = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(1, 0, 0),
+        -yuriFallState.direction * 1.42 * eased
+      );
+      rig.rider.quaternion.copy(yuriFallState.startRiderQuat).premultiply(riderFallQ);
+
+      // Open both arms outward as Yuri is thrown from the handlebars.
+      const humanoid = rig.humanoid;
+      const armOpen = eased;
+      const lerpArm = (a, b) => a + (b - a) * armOpen;
+      setRideBone(humanoid, 'leftUpperArm',
+        lerpArm(-0.058, 0.10), lerpArm(-0.884, -0.50), lerpArm(-0.134, 0.92));
+      setRideBone(humanoid, 'rightUpperArm',
+        lerpArm(-0.058, 0.10), lerpArm(0.884, 0.50), lerpArm(0.134, -0.92));
+      setRideBone(humanoid, 'leftLowerArm',
+        lerpArm(-0.324, 0.0), lerpArm(-0.781, -0.28), lerpArm(0.105, 0.18));
+      setRideBone(humanoid, 'rightLowerArm',
+        lerpArm(-0.324, 0.0), lerpArm(0.781, 0.28), lerpArm(-0.105, -0.18));
+      rig.vrm.update(0);
+      rig.rider.updateMatrixWorld(true);
+
+      // Ground the whole body from posed bones. Feet alone can sit high while
+      // the pelvis/back floats, so include the torso, hips and hands too.
+      const headNode = humanoid.getNormalizedBoneNode('head');
+      const hipsNode = humanoid.getNormalizedBoneNode('hips');
+      const chestNode = humanoid.getNormalizedBoneNode('chest');
+      const leftHand = humanoid.getNormalizedBoneNode('leftHand');
+      const rightHand = humanoid.getNormalizedBoneNode('rightHand');
+      let lowestBoneY = Infinity;
+      for (const node of [rig.leftFoot, rig.rightFoot, headNode, hipsNode, chestNode, leftHand, rightHand]) {
+        if (!node) continue;
+        const world = new THREE.Vector3();
+        node.getWorldPosition(world);
+        lowestBoneY = Math.min(lowestBoneY, world.y);
+      }
+      if (Number.isFinite(lowestBoneY)) {
+        // Lower the whole pose until the lowest body joint is almost on the
+        // road. A tiny extra drop removes the visible gap under the torso.
+        rig.rider.position.y -= lowestBoneY - 0.025;
+        rig.rider.position.y -= 0.04;
+      }
+      rig.rider.updateMatrixWorld(true);
+
+      // Start covering immediately on impact, while the fall is still in
+      // progress: one palm to the nose, one palm to the abdomen.
+      {
+        const headNode = humanoid.getNormalizedBoneNode('head');
+        const chestNode = humanoid.getNormalizedBoneNode('chest');
+        const hipsNode = humanoid.getNormalizedBoneNode('hips');
+        if (headNode && chestNode && hipsNode) {
+          const headPos = new THREE.Vector3();
+          const headQuat = new THREE.Quaternion();
+          const chestPos = new THREE.Vector3();
+          const chestQuat = new THREE.Quaternion();
+          const hipsPos = new THREE.Vector3();
+          headNode.getWorldPosition(headPos);
+          headNode.getWorldQuaternion(headQuat);
+          chestNode.getWorldPosition(chestPos);
+          chestNode.getWorldQuaternion(chestQuat);
+          hipsNode.getWorldPosition(hipsPos);
+
+          const noseTarget = headPos.clone().add(new THREE.Vector3(0.02, 0.03, 0.10).applyQuaternion(headQuat));
+          const bellyTarget = chestPos.clone().lerp(hipsPos, 0.32)
+            .add(new THREE.Vector3(0, 0.08, 0.10).applyQuaternion(chestQuat));
+
+          // Align the palm centre, not the wrist, with the face / abdomen.
+          // Adjusting the wrist target iteratively keeps the forearm from
+          // becoming the part that covers the nose.
+          for (let pass = 0; pass < 3; pass++) {
+            solveArmIK(rig, rig.rightUpperArm, rig.rightLowerArm, rig.rightHand, noseTarget);
+            solveArmIK(rig, rig.leftUpperArm, rig.leftLowerArm, rig.leftHand, bellyTarget);
+            rig.vrm.update(0);
+            rig.rider.updateMatrixWorld(true);
+            const rightPalm = getPalmWorld(humanoid, 'right');
+            const leftPalm = getPalmWorld(humanoid, 'left');
+            if (rightPalm) noseTarget.add(noseTarget.clone().sub(rightPalm));
+            if (leftPalm) bellyTarget.add(bellyTarget.clone().sub(leftPalm));
+          }
+          rig.vrm.update(0);
+          rig.rider.updateMatrixWorld(true);
+        }
+      }
+
+      rig.vrm.update(dt);
+
+      if (t >= 0.999 && !yuriFallColliderAdded) {
+        yuriFallColliderAdded = true;
+        rig.root.updateMatrixWorld(true);
+        rig.rider.updateMatrixWorld(true);
+
+        // Two tight world-space AABBs: one for the fallen bike, one for Yuri.
+        const bikeBox = new THREE.Box3().setFromObject(rig.root);
+        const riderBox = new THREE.Box3().setFromObject(rig.rider);
+        for (const name of ['head', 'chest', 'hips', 'leftHand', 'rightHand', 'leftFoot', 'rightFoot']) {
+          const node = rig.humanoid.getNormalizedBoneNode(name);
+          if (!node) continue;
+          const world = new THREE.Vector3();
+          node.getWorldPosition(world);
+          riderBox.expandByPoint(world);
+        }
+        const bikeCenter = new THREE.Vector3();
+        const bikeSize = new THREE.Vector3();
+        bikeBox.getCenter(bikeCenter);
+        bikeBox.getSize(bikeSize);
+        bikeSize.multiplyScalar(0.85);
+        bikeBox.setFromCenterAndSize(bikeCenter, bikeSize);
+        bikeBox.expandByScalar(0.01);
+        riderBox.expandByScalar(0.02);
+        audienceObstacles.push(bikeBox, riderBox);
+        yuriBodyColliders.push(riderBox, bikeBox);
+        audience.userData.setObstacles?.(audienceObstacles);
+        console.log('[Audience] Fallen Yuri/bike colliders added.');
+      }
+    }
+
+    function updateYuriRide(dt) {
+      if (!yuriRideRig) return;
+      const rig = yuriRideRig;
+      if (yuriFallState) {
+        applyYuriFall(dt);
+        return;
+      }
+      if (yuriRideJourney && !yuriRideJourney.finished) {
+        yuriRideJourney.elapsed += dt;
+        const travel = Math.min(1, yuriRideJourney.elapsed / yuriRideJourney.duration);
+        const point = yuriRideJourney.curve.getPointAt(travel);
+        const tangent = yuriRideJourney.curve.getTangentAt(travel);
+        rig.root.position.copy(point);
+        rig.root.rotation.y = Math.atan2(tangent.x, tangent.z);
+        if (travel >= 1) {
+          yuriRideJourney.finished = true;
+          rig.root.position.copy(yuriRideJourney.curve.getPointAt(1));
+          rig.root.rotation.y = Math.atan2(
+            yuriRideJourney.curve.getTangentAt(1).x,
+            yuriRideJourney.curve.getTangentAt(1).z
+          );
+        }
+      }
+      // Red car collision: it runs along x=1.6; the bike finishes in the
+      // road centre. Knock both rider and bicycle over once.
+      if (yuriRideJourney && !yuriFallState && rig.root.position.z > -8) {
+        const carDx = Math.abs(distantBus.position.x - rig.root.position.x);
+        const carDz = Math.abs(distantBus.position.z - rig.root.position.z);
+        if (carDx < 3.0 && carDz < 5.0) {
+          yuriRideJourney.finished = true;
+          // Steer the red car around the fallen rider/bike, then return to
+          // its normal lane after passing the crossing.
+          const obstacleX = rig.root.position.x;
+          const steerSide = obstacleX >= distantBus.position.x ? -1 : 1;
+          redCarDetour = {
+            elapsed: 0,
+            duration: 3.6,
+            startX: distantBus.position.x,
+            targetX: THREE.MathUtils.clamp(distantBus.position.x + steerSide * 3.2, -3.2, 3.2)
+          };
+          rig.root.updateMatrixWorld(true);
+          const riderWorld = new THREE.Vector3();
+          const riderQuat = new THREE.Quaternion();
+          rig.rider.getWorldPosition(riderWorld);
+          rig.rider.getWorldQuaternion(riderQuat);
+          scene.updateMatrixWorld(true);
+          scene.attach(rig.rider);
+          yuriFallState = {
+            elapsed: 0,
+            duration: 1.1,
+            startY: rig.root.position.y,
+            startQuat: rig.root.quaternion.clone(),
+            startRiderWorld: riderWorld,
+            startRiderQuat: riderQuat,
+            direction: distantBus.position.x > rig.root.position.x ? 1 : -1
+          };
+          applyYuriFall(0.001);
+          return;
+        }
+      }
+
+      const phase = yuriRidePhase;
+      const humanoid = rig.humanoid;
+
+      // Reset to a natural seated starting pose before solving to the pedals.
+      setRideBone(humanoid, 'leftUpperLeg', -1.20, -0.05, -0.06);
+      setRideBone(humanoid, 'rightUpperLeg', -1.02, 0.05, 0.06);
+      setRideBone(humanoid, 'leftLowerLeg', 1.08, 0, 0);
+      setRideBone(humanoid, 'rightLowerLeg', 0.92, 0, 0);
+      setRideBone(humanoid, 'leftFoot', -0.08, 0, 0);
+      setRideBone(humanoid, 'rightFoot', -0.08, 0, 0);
+
+      // Relaxed torso: small downstroke bob; hips stay planted on the saddle.
+      const bodyBob = Math.sin(phase * 2);
+      setRideBone(humanoid, 'spine', 0.580 + bodyBob * 0.020, 0, 0);
+      setRideBone(humanoid, 'chest', 0.242 - bodyBob * 0.012, 0, 0);
+      setRideBone(humanoid, 'head', -0.20, 0, 0);
+
+      rig.vrm.update(0);
+      rig.root.updateMatrixWorld(true);
+
+      // Clockwise crank seen from Yuri's right side (+Y up, +Z forward).
+      // Right starts front-low; the left pedal is always 180° opposite.
+      const crankRadius = 0.26;
+      // VRM character space: the character's left side is +X and the right
+      // side is -X. Keep each foot on its matching pedal.
+      const leftLocal = new THREE.Vector3(
+        0.15,
+        rig.bottomBracket.y + Math.cos(phase + Math.PI) * crankRadius,
+        Math.sin(phase + Math.PI) * crankRadius
+      );
+      const rightLocal = new THREE.Vector3(
+        -0.15,
+        rig.bottomBracket.y + Math.cos(phase) * crankRadius,
+        Math.sin(phase) * crankRadius
+      );
+
+      rig.pedalRight.position.copy(rightLocal);
+      rig.pedalLeft.position.copy(leftLocal);
+      rig.pedalRight.rotation.set(0, 0, 0);
+      rig.pedalLeft.rotation.set(0, 0, 0);
+
+      const ankleLift = new THREE.Vector3(0, 0.105, 0.015);
+      const targetRight = rig.root.localToWorld(rightLocal.clone().add(ankleLift));
+      const targetLeft = rig.root.localToWorld(leftLocal.clone().add(ankleLift));
+      solveLegIK(rig, rig.rightUpper, rig.rightLower, rig.rightFoot, targetRight);
+      solveLegIK(rig, rig.leftUpper, rig.leftLower, rig.leftFoot, targetLeft);
+
+      // Ankles follow the pedal with a small, soft adjustment.
+      rig.leftFoot.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(1, 0, 0), -0.08 + Math.sin(phase) * 0.06
+      ));
+      rig.rightFoot.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(1, 0, 0), -0.08 - Math.sin(phase) * 0.06
+      ));
+
+      // Apply the solved normalized-bone rotations to the VRM skin. Without
+      // this second update the feet would move while the rendered leg mesh
+      // stayed in its previous pose.
+      rig.vrm.update(dt);
+      rig.root.updateMatrixWorld(true);
+
+      const setRod = (rod, a, b) => {
+        const direction = new THREE.Vector3().subVectors(b, a);
+        const length = direction.length();
+        rod.position.copy(a).add(b).multiplyScalar(0.5);
+        rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+        rod.scale.set(1, length, 1);
+      };
+      setRod(rig.crankRight, rig.bottomBracket, rightLocal);
+      setRod(rig.crankLeft, rig.bottomBracket, leftLocal);
+
+      if (!yuriRideJourney || !yuriRideJourney.finished) yuriRidePhase += dt * 2.7;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const elapsed = clock.getElapsedTime();
+
+      // 1. 更新細雨粒子下落
+      if (rainEnabled) {
+        const posArr = rainGeo.attributes.position.array;
+        for (let i = 0; i < rainCount; i++) {
+          const drop = rainVelocities[i] * dt;
+          posArr[i * 6] -= drop * 0.08;
+          posArr[i * 6 + 1] -= drop;
+          posArr[i * 6 + 3] -= drop * 0.08;
+          posArr[i * 6 + 4] -= drop;
+
+          if (posArr[i * 6 + 4] < 0) {
+            const rx = (Math.random() - 0.5) * 34;
+            const ry = 24 + Math.random() * 6;
+            const rz = (Math.random() - 0.5) * 85 - 5;
+            const len = 0.45 + Math.random() * 0.3;
+            posArr[i * 6] = rx;
+            posArr[i * 6 + 1] = ry;
+            posArr[i * 6 + 2] = rz;
+            posArr[i * 6 + 3] = rx - 0.04;
+            posArr[i * 6 + 4] = ry - len;
+            posArr[i * 6 + 5] = rz;
+          }
+        }
+        rainGeo.attributes.position.needsUpdate = true;
+      }
+
+      // 2. 更新煙囪炊煙上升與擴散
+      smokeParticles.forEach(sp => {
+        sp.userData.progress += sp.userData.speed * dt;
+        if (sp.userData.progress >= 1) {
+          sp.userData.progress = 0;
+        }
+        const p = sp.userData.progress;
+        sp.position.x = sp.userData.origin.x + Math.sin(elapsed * 0.8 + p * 5) * 0.35 + p * 0.8;
+        sp.position.y = sp.userData.origin.y + p * 5.2;
+        sp.position.z = sp.userData.origin.z + Math.cos(elapsed * 0.6 + p * 4) * 0.25;
+        sp.scale.setScalar(0.75 + p * 2.4);
+        sp.material.opacity = Math.sin(p * Math.PI) * 0.16;
+      });
+
+      // 3. 懸掛酒館招牌隨微風輕微擺動 & 路燈微弱呼吸閃爍
+      buildingGroups.forEach(bg => {
+        bg.traverse(child => {
+          if (child.userData && child.userData.isHangingSign) {
+            child.rotation.z = Math.sin(elapsed * 1.9) * 0.045;
+          }
+        });
+      });
+
+      streetLampLights.forEach((light, idx) => {
+        const flicker = Math.sin(elapsed * 7.5 + idx * 2.1) * 0.18 + Math.sin(elapsed * 19 + idx) * 0.06;
+        light.intensity += flicker * dt * 8;
+      });
+
+      // 4. Red car movement; detour around a fallen rider then return to lane.
+      const previousCarX = distantBus.position.x;
+      const redCarSpeed = redCarDetour ? 9.6 : 4.8;
+      distantBus.position.z += redCarSpeed * dt;
+      if (redCarDetour) {
+        redCarDetour.elapsed += dt;
+        const d = Math.min(1, redCarDetour.elapsed / redCarDetour.duration);
+        let laneX;
+        if (d < 0.28) {
+          const k = 1 - Math.pow(1 - d / 0.28, 3);
+          laneX = THREE.MathUtils.lerp(redCarDetour.startX, redCarDetour.targetX, k);
+        } else if (d < 0.7) {
+          laneX = redCarDetour.targetX;
+        } else {
+          const k = (d - 0.7) / 0.3;
+          laneX = THREE.MathUtils.lerp(redCarDetour.targetX, 1.6, k * k * (3 - 2 * k));
+        }
+        distantBus.position.x = laneX;
+        const carYaw = Math.atan2(distantBus.position.x - previousCarX, Math.max(0.001, redCarSpeed * dt));
+        distantBus.rotation.y += (carYaw - distantBus.rotation.y) * 0.2;
+        if (d >= 1) {
+          distantBus.position.x = 1.6;
+          distantBus.rotation.y = 0;
+          redCarDetour = null;
+        }
+      } else {
+        distantBus.position.x = 1.6;
+        distantBus.rotation.y = 0;
+      }
+      if (!redCarFinished && distantBus.position.z > 42) {
+        // The red car makes only one pass; after leaving the street it is gone.
+        redCarFinished = true;
+        redCarDetour = null;
+        distantBus.visible = false;
+        audience.userData.setMoveInput?.({ x: 0, y: 0, magnitude: 0 });
+        joystick.element.style.display = '';
+        joystick.element.style.pointerEvents = '';
+      }
+
+      // Allow a full 360° orbit, but keep the orbit radius inside the street
+      // as the camera turns toward the shopfronts. Instead of clamping the
+      // camera after OrbitControls moves it (which caused jitter), constrain
+      // the orbit distance itself. Rotating remains free; the camera naturally
+      // dollies in near the side walls and can zoom back out facing down the street.
+      const orbitDx = camera.position.x - controls.target.x;
+      const orbitDz = camera.position.z - controls.target.z;
+      const orbitRadius = Math.hypot(orbitDx, orbitDz);
+      const streetLimit = 7.15;
+      const sinAzimuth = orbitRadius > 0.001 ? Math.abs(orbitDx) / orbitRadius : 0;
+      const allowedDistance = sinAzimuth > 0.001
+        ? Math.min(48, streetLimit / sinAzimuth)
+        : 48;
+      controls.minAzimuthAngle = -Infinity;
+      controls.maxAzimuthAngle = Infinity;
+      controls.maxDistance = Math.max(3, allowedDistance);
+      updateYuriRide(dt);
+      audience.userData.update?.(elapsed, dt, camera);
+      if (!yuriHelpShown && yuriFallColliderAdded && yuriBodyColliders.length) {
+        let nearest = Infinity;
+        for (const box of yuriBodyColliders) {
+          const dx = Math.max(box.min.x - audience.position.x, 0, audience.position.x - box.max.x);
+          const dz = Math.max(box.min.z - audience.position.z, 0, audience.position.z - box.max.z);
+          nearest = Math.min(nearest, Math.hypot(dx, dz));
+        }
+        // Trigger before the body collider stops the audience: head, torso,
+        // hands and feet are all inside these tight boxes.
+        if (nearest < 2.0) showYuriHelp();
+      }
+      for (const phone of phonePrompts) {
+        const near = Math.hypot(audience.position.x - phone.x, audience.position.z - phone.z) < 4.2;
+        phone.prompt.setVisible(near && yuriHelpSeen && !phoneAnswered);
+        phone.prompt.update();
+      }
+      leavePrompt?.update();
+      for (const vehicle of emergencyVehicles) {
+        if (!vehicle.active) continue;
+        if (vehicle.t < 0) {
+          vehicle.t += dt;
+          continue;
+        }
+        vehicle.t = Math.min(1, vehicle.t + dt / vehicle.duration);
+        const k = 1 - Math.pow(1 - vehicle.t, 3);
+        vehicle.group.position.z = THREE.MathUtils.lerp(vehicle.startZ, vehicle.stopZ, k);
+        vehicle.group.position.x = THREE.MathUtils.lerp(vehicle.startX, vehicle.stopX, k);
+        if (vehicle.colliderBox && vehicle.colliderOrigin) {
+          vehicle.colliderBox.copy(vehicle.baseBox);
+          vehicle.colliderBox.translate(new THREE.Vector3(
+            vehicle.group.position.x - vehicle.colliderOrigin.x,
+            0,
+            vehicle.group.position.z - vehicle.colliderOrigin.z
+          ));
+        }
+      }
+      if (emergencyCollidersRegistered) {
+        // setObstacles stores cloned boxes, so refresh them as the cars move.
+        audience.userData.setObstacles?.(audienceObstacles);
+      }
+      if (!emergencyArrived && emergencyVehicles.length >= 3) {
+        const activeVehicles = emergencyVehicles.filter((vehicle) => vehicle.active);
+        if (activeVehicles.length >= 3 && activeVehicles.every((vehicle) => vehicle.t >= 1)) {
+          emergencyArrived = true;
+        }
+      }
+      if (emergencyArrived && yuriBodyColliders.length) {
+        let nearest = Infinity;
+        for (const box of yuriBodyColliders) {
+          const dx = Math.max(box.min.x - audience.position.x, 0, audience.position.x - box.max.x);
+          const dz = Math.max(box.min.z - audience.position.z, 0, audience.position.z - box.max.z);
+          nearest = Math.min(nearest, Math.hypot(dx, dz));
+        }
+        setEmergencyTouchDialogue(nearest < 2.0);
+      }
+      controls.update();
+      composer.render();
+    }
+
+    // 啟動與載入畫面淡出
+    window.addEventListener('load', () => {
+      document.body.classList.add('ready');
+      const loader = document.getElementById('loader-screen');
+      setTimeout(() => {
+        loader.classList.add('hidden-loader');
+      }, 650);
+      animate();
+    });
+  </script>
+</body>
+</html>
