@@ -305,8 +305,14 @@
       line-height: 1.42;
       letter-spacing: 0.01em;
     }
+    /* Narrow layouts: keep the dialogue box above the bottom-right joystick. */
+    @media (max-width: 860px) {
+      .yuri-dialogue {
+        bottom: calc(max(22px, env(safe-area-inset-bottom)) + 136px);
+      }
+    }
     @media (max-width: 720px), (max-height: 520px) {
-      .yuri-dialogue { bottom: 132px; padding: 14px 18px 16px; }
+      .yuri-dialogue { padding: 14px 18px 16px; }
     }
 
     .brand {
@@ -1090,8 +1096,16 @@
     const joystick = createJoystick();
     joystick.element.style.display = 'none';
     joystick.element.style.pointerEvents = 'none';
+    let joystickUnlocked = false;
+    const showJoystick = () => {
+      if (joystickUnlocked) return;
+      joystickUnlocked = true;
+      audience.userData.setMoveInput?.({ x: 0, y: 0, magnitude: 0 });
+      joystick.element.style.display = '';
+      joystick.element.style.pointerEvents = '';
+    };
     window.addEventListener('joystickmove', (event) => {
-      if (!redCarFinished) {
+      if (!joystickUnlocked) {
         audience.userData.setMoveInput?.({ x: 0, y: 0, magnitude: 0 });
         return;
       }
@@ -1170,6 +1184,7 @@
     let yuriHelpOpen = false;
     let yuriHelpShown = false;
     let yuriHelpSeen = false;
+    let yuriHelpInRange = false;
     let emergencyTouchOpen = false;
 
     const showDialogueLine = (index) => {
@@ -1181,10 +1196,21 @@
       dialogueElement.setAttribute('aria-hidden', 'false');
     };
 
+    const hideYuriHelp = () => {
+      if (!yuriHelpOpen) return;
+      yuriHelpOpen = false;
+      yuriHelpSeen = true;
+      dialogueElement?.classList.remove('is-visible');
+      dialogueElement?.setAttribute('aria-hidden', 'true');
+    };
+
     const showYuriHelp = () => {
-      if (yuriHelpShown || !dialogueElement || !dialogueSpeakerElement || !dialogueLineElement) return;
+      if (yuriHelpOpen || !dialogueElement || !dialogueSpeakerElement || !dialogueLineElement) return;
       yuriHelpShown = true;
       yuriHelpOpen = true;
+      // Showing the line once is enough to unlock the phone prompt, even if
+      // the player walks away without clicking the dialogue.
+      yuriHelpSeen = true;
       dialogueSpeakerElement.textContent = 'Mai';
       dialogueLineElement.textContent = 'Help me, my nose really hurts...';
       dialogueElement.classList.add('is-visible');
@@ -1209,10 +1235,7 @@
     const advanceDialogue = () => {
       if (emergencyTouchOpen) return;
       if (yuriHelpOpen) {
-        yuriHelpOpen = false;
-        yuriHelpSeen = true;
-        dialogueElement?.classList.remove('is-visible');
-        dialogueElement?.setAttribute('aria-hidden', 'true');
+        hideYuriHelp();
         return;
       }
       if (dialogueIndex < 0) {
@@ -2981,6 +3004,9 @@
         audienceObstacles.push(bikeBox, riderBox);
         yuriBodyColliders.push(riderBox, bikeBox);
         audience.userData.setObstacles?.(audienceObstacles);
+        // After the red car has knocked Yuri down, unlock the joystick without
+        // waiting for the car to drive all the way out of the street.
+        showJoystick();
         console.log('[Audience] Fallen Yuri/bike colliders added.');
       }
     }
@@ -3214,9 +3240,7 @@
         redCarFinished = true;
         redCarDetour = null;
         distantBus.visible = false;
-        audience.userData.setMoveInput?.({ x: 0, y: 0, magnitude: 0 });
-        joystick.element.style.display = '';
-        joystick.element.style.pointerEvents = '';
+        showJoystick();
       }
 
       // Allow a full 360° orbit, but keep the orbit radius inside the street
@@ -3237,16 +3261,27 @@
       controls.maxDistance = Math.max(3, allowedDistance);
       updateYuriRide(dt);
       audience.userData.update?.(elapsed, dt, camera);
-      if (!yuriHelpShown && yuriFallColliderAdded && yuriBodyColliders.length) {
+      if (yuriFallColliderAdded && yuriBodyColliders.length) {
         let nearest = Infinity;
         for (const box of yuriBodyColliders) {
           const dx = Math.max(box.min.x - audience.position.x, 0, audience.position.x - box.max.x);
           const dz = Math.max(box.min.z - audience.position.z, 0, audience.position.z - box.max.z);
           nearest = Math.min(nearest, Math.hypot(dx, dz));
         }
-        // Trigger before the body collider stops the audience: head, torso,
-        // hands and feet are all inside these tight boxes.
-        if (nearest < 2.0) showYuriHelp();
+        if (emergencyArrived) {
+          // Emergency services have arrived; the repeated help line is done.
+          yuriHelpInRange = false;
+          if (yuriHelpOpen) hideYuriHelp();
+        } else if (nearest < 2.0) {
+          if (!yuriHelpInRange && dialogueIndex < 0) {
+            // A fresh touch before the ambulance/police arrive: show it again.
+            yuriHelpInRange = true;
+            showYuriHelp();
+          }
+        } else if (nearest > 2.4) {
+          yuriHelpInRange = false;
+          if (yuriHelpOpen) hideYuriHelp();
+        }
       }
       for (const phone of phonePrompts) {
         const near = Math.hypot(audience.position.x - phone.x, audience.position.z - phone.z) < 4.2;
