@@ -454,99 +454,98 @@ body.ready #loading {
     }
 
     .task-hint {
-      --task-line: rgba(190, 211, 200, 0.32);
-      --task-ink: rgba(229, 240, 231, 0.92);
+      --task-line: rgba(190, 211, 200, 0.22);
+      --task-ink: rgba(229, 240, 231, 0.8);
       --task-accent: #a9c2b2;
-      --task-surface: rgba(7, 16, 12, 0.72);
-      --task-glow: rgba(140, 180, 155, 0.3);
+      --task-surface: rgba(4, 12, 8, 0.46);
+      --task-glow: rgba(140, 180, 155, 0.16);
     }
-    /* Objective hint, top-right */
+    /* Objective hint: minimal serif line with hairline rules */
     .task-hint {
       position: fixed;
       top: max(22px, env(safe-area-inset-top));
       right: max(22px, env(safe-area-inset-right));
       z-index: 36;
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      width: min(310px, calc(100vw - 44px));
-      padding: 12px 14px;
-      background: var(--task-surface);
-      border: 1px solid var(--task-line);
-      border-radius: 3px;
-      box-shadow:
-        inset 0 0 20px rgba(0, 0, 0, 0.16),
-        0 10px 30px rgba(0, 0, 0, 0.16);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      width: max-content;
+      max-width: min(560px, calc(100vw - 44px));
+      padding: 12px 26px;
+      background: radial-gradient(ellipse at 50% 48%, var(--task-surface), transparent 72%);
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
       color: var(--task-ink);
       opacity: 0;
-      transform: translateY(-6px);
+      transform: translateY(-5px);
       transition: opacity 420ms ease, transform 420ms ease;
       pointer-events: none;
+      text-align: center;
     }
     body.ready .task-hint {
       opacity: 1;
       transform: none;
     }
-    .task-hint__check {
-      flex: 0 0 18px;
-      width: 18px;
-      height: 18px;
-      margin-top: 1px;
-      border: 1px solid var(--task-line);
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      color: #1b140d;
-      transition: background-color 240ms ease, border-color 240ms ease, box-shadow 240ms ease;
+    .task-hint::before,
+    .task-hint::after {
+      content: "";
+      position: absolute;
+      left: 6%;
+      right: 6%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--task-line) 16%, var(--task-line) 84%, transparent);
+      box-shadow: 0 0 6px var(--task-glow);
+      pointer-events: none;
     }
-    .task-hint__check svg {
-      width: 12px;
-      height: 12px;
-      display: block;
-      opacity: 0;
-      transform: scale(0.7);
-      transition: opacity 220ms ease, transform 220ms ease;
-    }
-    .task-hint.is-done .task-hint__check {
-      background: var(--task-accent);
-      border-color: var(--task-accent);
-      box-shadow: 0 0 12px var(--task-glow);
-    }
-    .task-hint.is-done .task-hint__check svg {
-      opacity: 1;
-      transform: none;
-    }
+    .task-hint::before { top: 0; }
+    .task-hint::after { bottom: 0; }
     .task-hint__text {
       margin: 0;
-      font-size: 11px;
-      line-height: 1.42;
-      letter-spacing: 0.02em;
-      text-wrap: pretty;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(8px, 2.2vw, 12px);
+      font-weight: 400;
+      line-height: 1.25;
+      letter-spacing: 0.015em;
+      white-space: nowrap;
+      text-shadow: 0 0 14px var(--task-glow);
+    }
+    .task-hint__check {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      width: 12px;
+      height: 12px;
+      transform: translateY(-50%);
+      color: var(--task-accent);
+      opacity: 0;
+      filter: drop-shadow(0 0 4px var(--task-glow));
+      transition: opacity 260ms ease;
+    }
+    .task-hint__check svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .task-hint.is-done .task-hint__check {
+      opacity: 0.9;
     }
     @media (max-width: 720px) {
       .task-hint {
         top: 120px;
         right: max(16px, env(safe-area-inset-right));
-        width: min(270px, calc(100vw - 32px));
-        padding: 10px 12px;
-        gap: 8px;
-      }
-      .task-hint__check {
-        flex-basis: 16px;
-        width: 16px;
-        height: 16px;
+        max-width: calc(100vw - 32px);
+        padding: 10px 20px;
       }
       .task-hint__text {
-        font-size: 10px;
-        line-height: 1.4;
+        font-size: clamp(8px, 2.2vw, 10.5px);
+      }
+      .task-hint__check {
+        right: 6px;
+        width: 10px;
+        height: 10px;
       }
     }
     @media (prefers-reduced-motion: reduce) {
       .task-hint,
-      .task-hint__check,
-      .task-hint__check svg { transition: none; }
+      .task-hint__check { transition: none; }
     }
 
 </style>
